@@ -14,6 +14,7 @@
         .card { border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .badge-confirmed { background-color: #10b981; }
         .badge-ambiguous { background-color: #f59e0b; }
+        .status-pill { font-size: 0.85rem; font-weight: 600; padding: 0.35em 0.65em; border-radius: 50rem; }
     </style>
 </head>
 <body>
@@ -22,7 +23,28 @@
     <div class="row">
         <!-- Sidebar -->
         <div class="col-md-3 col-lg-2 sidebar p-3 d-flex flex-column">
-            <h5 class="fw-bold mb-4 text-primary"><i class="bi bi-gear-wide-connected me-2"></i>AutoParts Admin</h5>
+            <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-gear-wide-connected me-2"></i>AutoParts Admin</h5>
+
+            <!-- System Status Badges -->
+            <div class="card bg-dark text-white p-2 mb-4 border-secondary small">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span>Banco:</span>
+                    <span id="stDb" class="badge bg-secondary status-pill">Verificando...</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span>Prov. Placa:</span>
+                    <span id="stPlate" class="badge bg-secondary status-pill">Verificando...</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span>Catálogo:</span>
+                    <span id="stCatalog" class="badge bg-secondary status-pill">Verificando...</span>
+                </div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <span>Ambiente:</span>
+                    <span id="stEnv" class="badge bg-info text-dark status-pill">DEV</span>
+                </div>
+            </div>
+
             <ul class="nav nav-pills flex-column mb-auto">
                 <li class="nav-item">
                     <a href="#" class="nav-link active" onclick="switchTab('plateTab')"><i class="bi bi-search me-2"></i>Consulta por Placa</a>
@@ -43,6 +65,14 @@
 
         <!-- Main Content -->
         <div class="col-md-9 col-lg-10 p-4">
+            <!-- Alert Banner for Real/Mock mode -->
+            <div id="modeAlert" class="alert alert-warning d-flex align-items-center mb-4" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+                <div>
+                    <strong>MODO MOCK / DESENVOLVIMENTO ATIVO:</strong> O sistema está executando com dados simulados para testes. Em modo de produção com API key configurada, o badge indicará <strong>DADOS REAIS</strong>.
+                </div>
+            </div>
+
             <!-- 1. Plate Lookup Tab -->
             <div id="plateTab" class="tab-content">
                 <h3 class="fw-bold mb-4">Consulta de Veículo por Placa</h3>
@@ -62,7 +92,10 @@
                     <div class="card p-4">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h4 id="vehicleTitle" class="fw-bold m-0"></h4>
-                            <span id="vehicleStatusBadge" class="badge bg-success p-2"></span>
+                            <div>
+                                <span id="vehicleDataModeBadge" class="badge bg-secondary p-2 me-2"></span>
+                                <span id="vehicleStatusBadge" class="badge bg-success p-2"></span>
+                            </div>
                         </div>
                         <div class="row g-3" id="vehicleDetailsGrid"></div>
                     </div>
@@ -90,7 +123,7 @@
 
                 <div id="partsResultContainer" style="display:none;">
                     <div class="card p-4">
-                        <h5 class="fw-bold mb-3">ResultadosEncontrados: <span id="partsCount" class="text-primary">0</span></h5>
+                        <h5 class="fw-bold mb-3">Resultados Encontrados: <span id="partsCount" class="text-primary">0</span></h5>
                         <div class="table-responsive">
                             <table class="table table-hover align-middle">
                                 <thead class="table-dark">
@@ -156,6 +189,61 @@
 </div>
 
 <script>
+    document.addEventListener("DOMContentLoaded", loadHealthStatus);
+
+    async function loadHealthStatus() {
+        try {
+            const res = await fetch('/health');
+            const data = await res.json();
+
+            // DB
+            const stDb = document.getElementById('stDb');
+            if (data.database === 'connected') {
+                stDb.className = 'badge bg-success status-pill';
+                stDb.innerText = '🟢 Conectado';
+            } else {
+                stDb.className = 'badge bg-danger status-pill';
+                stDb.innerText = '🔴 Erro';
+            }
+
+            // Plate Provider
+            const stPlate = document.getElementById('stPlate');
+            if (data.plate_provider_status === 'configured') {
+                stPlate.className = 'badge bg-success status-pill';
+                stPlate.innerText = `🟢 ${data.plate_provider}`;
+            } else {
+                stPlate.className = 'badge bg-danger status-pill';
+                stPlate.innerText = '🔴 Não Configurado';
+            }
+
+            // Catalog
+            const stCatalog = document.getElementById('stCatalog');
+            if (data.catalog_status === 'configured') {
+                stCatalog.className = 'badge bg-success status-pill';
+                stCatalog.innerText = `🟢 Configurado (${data.catalog_parts_count})`;
+            } else {
+                stCatalog.className = 'badge bg-danger status-pill';
+                stCatalog.innerText = '🔴 Sem Peças';
+            }
+
+            // Env Alert Banner
+            const stEnv = document.getElementById('stEnv');
+            const alertBanner = document.getElementById('modeAlert');
+            stEnv.innerText = data.app_env.toUpperCase();
+
+            if (data.app_env === 'production' && data.plate_provider !== 'MOCK') {
+                alertBanner.className = 'alert alert-success d-flex align-items-center mb-4';
+                alertBanner.innerHTML = `<i class="bi bi-check-circle-fill me-2 fs-5"></i><div><strong>MODO DE PRODUÇÃO COM DADOS REAIS ATIVO:</strong> As consultas estão utilizando o provedor oficial <strong>${data.plate_provider}</strong>.</div>`;
+            } else {
+                alertBanner.className = 'alert alert-warning d-flex align-items-center mb-4';
+                alertBanner.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i><div><strong>AMBIENTE DE DESENVOLVIMENTO / MOCK ATIVO:</strong> Consultas utilizando simulação. Para consultas reais de produção, configure <code>APP_ENV=production</code> e insira sua <code>VEHICLE_API_KEY</code> no arquivo <code>.env</code>.</div>`;
+            }
+
+        } catch (e) {
+            console.error('Error fetching health status', e);
+        }
+    }
+
     function switchTab(tabId) {
         document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
         document.getElementById(tabId).style.display = 'block';
@@ -172,6 +260,16 @@
             const data = await res.json();
 
             document.getElementById('plateResultContainer').style.display = 'block';
+            const modeBadge = document.getElementById('vehicleDataModeBadge');
+
+            if (data.cache_info && data.cache_info.source === 'MOCK_PROVIDER') {
+                modeBadge.className = 'badge bg-warning text-dark p-2 me-2';
+                modeBadge.innerText = '⚠️ MOCK / SIMULADO';
+            } else {
+                modeBadge.className = 'badge bg-primary p-2 me-2';
+                modeBadge.innerText = '🟢 DADOS REAIS';
+            }
+
             if (data.vehicle) {
                 document.getElementById('vehicleTitle').innerText = `${data.vehicle.make} ${data.vehicle.model} ${data.vehicle.version || ''}`;
                 document.getElementById('vehicleStatusBadge').innerText = data.status;
@@ -247,6 +345,7 @@
             const data = await res.json();
             document.getElementById('importResultContainer').style.display = 'block';
             document.getElementById('importResultJson').innerText = JSON.stringify(data, null, 2);
+            loadHealthStatus();
         } catch (e) {
             alert('Erro na importação: ' + e);
         }

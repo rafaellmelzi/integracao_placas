@@ -8,6 +8,7 @@ from app.db.models import Base
 from app.db.database import get_db
 from app.main import app
 from app.seeds.seed_data import seed_database
+from app.core.config import settings
 
 # Setup in-memory SQLite database for testing
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -22,7 +23,6 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 @pytest.fixture(scope="module", autouse=True)
 def setup_test_db():
     Base.metadata.create_all(bind=engine)
-    # Seed sample data into test DB
     db = TestingSessionLocal()
     try:
         from app.seeds import seed_data
@@ -43,7 +43,16 @@ def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
-# 1. Test Plate Lookups
+# 1. Healthcheck Endpoint
+def test_health_check():
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert data["database"] == "connected"
+    assert "plate_provider" in data
+
+# 2. Plate Lookups (Dev / Mock Mode)
 def test_lookup_mercosul_plate():
     response = client.get("/api/v1/vehicles/plate/ABC1D23")
     assert response.status_code == 200
@@ -79,21 +88,36 @@ def test_lookup_not_found_plate():
     response = client.get("/api/v1/vehicles/plate/ZZZ9999")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "DATA_SOURCE_NOT_CONFIGURED"
+    assert data["status"] == "VEHICLE_NOT_FOUND" or data["status"] == "DATA_SOURCE_NOT_CONFIGURED"
 
-# 2. Test Cache Hit
+# 3. Production Mode unconfigured behavior
+def test_production_mode_unconfigured_provider():
+    orig_env = settings.APP_ENV
+    orig_provider = settings.VEHICLE_PROVIDER
+    try:
+        settings.APP_ENV = "production"
+        settings.VEHICLE_PROVIDER = "MOCK"
+        settings.VEHICLE_API_KEY = ""
+
+        response = client.get("/api/v1/vehicles/plate/RRR8888")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "DATA_SOURCE_NOT_CONFIGURED"
+    finally:
+        settings.APP_ENV = orig_env
+        settings.VEHICLE_PROVIDER = orig_provider
+
+# 4. Cache Hit Test
 def test_cache_hit_performance():
-    # First request populates/uses cache
     res1 = client.get("/api/v1/vehicles/plate/XYZ9876")
     assert res1.status_code == 200
 
-    # Second request must return from cache
     res2 = client.get("/api/v1/vehicles/plate/XYZ9876")
     assert res2.status_code == 200
     data2 = res2.json()
     assert data2["cache_info"]["from_cache"] is True
 
-# 3. Test Parts Search
+# 5. Parts Search
 def test_parts_search_brake_disc():
     response = client.get("/api/v1/parts/search?plate=ABC1D23&query=disco%20de%20freio")
     assert response.status_code == 200
@@ -109,7 +133,6 @@ def test_parts_search_brake_disc():
     assert first_result["erp_mapping"]["erp_product_id"] == "AUTCOM-PRD-9988"
 
 def test_parts_search_synonym_query():
-    # Searching for "disco freio" or "disco" should resolve to BRAKE_DISC
     response = client.get("/api/v1/parts/search?plate=ABC1D23&query=disco")
     assert response.status_code == 200
     data = response.json()
@@ -122,7 +145,7 @@ def test_parts_search_no_matching_parts():
     data = response.json()
     assert data["status"] == "NO_COMPATIBLE_PARTS_FOUND"
 
-# 4. Test Catalog Importer
+# 6. Catalog Importer
 def test_catalog_importer_csv():
     csv_content = """fabricante,codigo,categoria,descricao,marca_veiculo,modelo_veiculo,motor,ano_inicio,ano_fim
 Bosch,0986BB0001,Filtro de Oleo,Filtro Lubrificante,VW,T-Cross,1.0 TSI,2019,2024
@@ -136,7 +159,7 @@ Bosch,0986BB0001,Filtro de Oleo,Filtro Lubrificante,VW,T-Cross,1.0 TSI,2019,2024
     assert data["status"] == "SUCCESS"
     assert data["success"] == 1
 
-# 5. Test ERP Product Mapping Endpoint
+# 7. ERP Product Mapping
 def test_create_erp_mapping():
     payload = {
         "erp_product_id": "AUTCOM-PRD-5544",

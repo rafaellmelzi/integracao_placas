@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+
+from app.core.config import settings
 from app.db.database import get_db
 from app.schemas.schemas import (
     PlateLookupResponseSchema, PartsSearchResponseSchema,
@@ -9,9 +12,34 @@ from app.schemas.schemas import (
 from app.services.plate_lookup_service import PlateLookupService
 from app.services.parts_search_service import PartsSearchService
 from app.importers.catalog_importer import CatalogImporter
-from app.db.models import ERPProductMapping, ERPProductMappingType, ConfidenceLevel
+from app.db.models import ERPProductMapping, ERPProductMappingType, ConfidenceLevel, Part
 
 router = APIRouter()
+
+@router.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    """
+    Healthcheck endpoint verifying DB connectivity and provider configuration status.
+    """
+    db_status = "connected"
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+
+    plate_provider_status = "configured" if (settings.VEHICLE_PROVIDER.upper() == "MOCK" or bool(settings.VEHICLE_API_KEY)) else "not_configured"
+    catalog_parts_count = db.query(Part).count()
+    catalog_status = "configured" if catalog_parts_count > 0 else "not_configured"
+
+    return {
+        "status": "healthy" if db_status == "connected" else "unhealthy",
+        "app_env": settings.APP_ENV,
+        "database": db_status,
+        "plate_provider": settings.VEHICLE_PROVIDER,
+        "plate_provider_status": plate_provider_status,
+        "catalog_status": catalog_status,
+        "catalog_parts_count": catalog_parts_count
+    }
 
 @router.get("/vehicles/plate/{plate}", response_model=PlateLookupResponseSchema)
 def lookup_vehicle_by_plate(plate: str, db: Session = Depends(get_db)):
