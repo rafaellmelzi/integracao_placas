@@ -1,0 +1,55 @@
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+import os
+
+from app.core.config import settings
+from app.db.database import init_db
+from app.api.endpoints import router as api_router
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Static files for Admin Panel
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Include Routers
+app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Admin Dashboard
+@app.get("/admin", response_class=HTMLResponse)
+def admin_panel():
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return HTMLResponse("<h1>Admin Dashboard Index File Not Found</h1>")
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+@app.get("/")
+def root():
+    return {
+        "project": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "docs": "/docs",
+        "admin": "/admin"
+    }
