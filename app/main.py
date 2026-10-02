@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import os
 
 from app.core.config import settings
-from app.db.database import init_db
+from app.db.database import init_db, get_db
 from app.api.endpoints import router as api_router
 
 @asynccontextmanager
@@ -61,11 +61,6 @@ def root():
 
 # Top-level Health check shortcut
 @app.get("/health")
-def health_redirect():
+def health_redirect(db=Depends(get_db)):
     from app.api.endpoints import health_check
-    from app.db.database import SessionLocal
-    db = SessionLocal()
-    try:
-        return health_check(db=db)
-    finally:
-        db.close()
+    return health_check(db=db)

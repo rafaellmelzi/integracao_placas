@@ -62,11 +62,11 @@ def normalize_engine(engine_raw: Optional[str]) -> Optional[str]:
     if not clean:
         return None
     if "1.0" in clean:
-        if "TSI" in clean or "TURBO" in clean:
+        if "TSI" in clean or "TURBO" in clean or "1.0T" in clean:
             return "1.0 TSI"
         return "1.0"
     elif "1.4" in clean:
-        if "TSI" in clean or "TURBO" in clean:
+        if "TSI" in clean or "TURBO" in clean or "1.4T" in clean:
             return "1.4 TSI"
         return "1.4"
     elif "1.6" in clean:

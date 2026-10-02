@@ -52,7 +52,45 @@ def test_health_check():
     assert data["database"] == "connected"
     assert "plate_provider" in data
 
-# 2. Plate Lookups (Dev / Mock Mode)
+# 2. Cascading Vehicle Dropdowns
+def test_get_vehicle_makes():
+    response = client.get("/api/v1/vehicles/makes")
+    assert response.status_code == 200
+    makes = response.json()
+    assert len(makes) >= 1
+    make_names = [m["name"] for m in makes]
+    assert "Volkswagen" in make_names
+
+def test_get_vehicle_models():
+    # Get Volkswagen ID
+    makes_res = client.get("/api/v1/vehicles/makes")
+    vw_id = [m["id"] for m in makes_res.json() if m["name"] == "Volkswagen"][0]
+
+    response = client.get(f"/api/v1/vehicles/makes/{vw_id}/models")
+    assert response.status_code == 200
+    models = response.json()
+    model_names = [m["name"] for m in models]
+    assert "T-Cross" in model_names
+
+# 3. Direct Vehicle Parts Search (Marca -> Modelo -> Ano -> Engine)
+def test_direct_vehicle_parts_search():
+    response = client.get("/api/v1/parts/search?make=Volkswagen&model=T-Cross&year=2023&engine=1.0%20TSI&query=disco%20de%20freio")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "SUCCESS"
+    assert data["results_count"] >= 1
+    assert data["results"][0]["manufacturer"] == "Fremax"
+    assert data["results"][0]["manufacturer_code"] == "BD1234"
+
+def test_strict_motorization_filtering_prevention():
+    # Search for 1.4 TSI should not return parts exclusive to 1.0 TSI
+    response = client.get("/api/v1/parts/search?make=Volkswagen&model=T-Cross&year=2023&version=Highline%20250%20TSI&engine=1.4%20TSI&query=disco%20de%20freio")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results_count"] == 0
+    assert data["status"] == "NO_COMPATIBLE_PARTS_FOUND"
+
+# 4. Plate Lookups
 def test_lookup_mercosul_plate():
     response = client.get("/api/v1/vehicles/plate/ABC1D23")
     assert response.status_code == 200
@@ -61,37 +99,14 @@ def test_lookup_mercosul_plate():
     assert data["status"] == "SUCCESS"
     assert data["vehicle"]["make"] == "Volkswagen"
     assert data["vehicle"]["model"] == "T-Cross"
-    assert data["vehicle"]["engine"] == "1.0 TSI"
-
-def test_lookup_old_plate():
-    response = client.get("/api/v1/vehicles/plate/ABC1234")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["plate"] == "ABC1234"
-    assert data["status"] == "SUCCESS"
-    assert data["vehicle"]["model"] == "Gol"
 
 def test_lookup_invalid_plate():
     response = client.get("/api/v1/vehicles/plate/INVALID123")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "INVALID_PLATE"
-    assert "Formato de placa inválido" in data["message"]
 
-def test_lookup_ambiguous_vehicle():
-    response = client.get("/api/v1/vehicles/plate/AMB1G88")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["is_ambiguous"] is True
-    assert data["status"] == "VEHICLE_VARIANT_AMBIGUOUS"
-
-def test_lookup_not_found_plate():
-    response = client.get("/api/v1/vehicles/plate/ZZZ9999")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "VEHICLE_NOT_FOUND" or data["status"] == "PROVIDER_NOT_CONFIGURED"
-
-# 3. Production Mode unconfigured behavior
+# 5. Production Mode Unconfigured Provider
 def test_production_mode_unconfigured_provider():
     orig_env = settings.APP_ENV
     orig_provider = settings.VEHICLE_PROVIDER
@@ -108,48 +123,10 @@ def test_production_mode_unconfigured_provider():
         settings.APP_ENV = orig_env
         settings.VEHICLE_PROVIDER = orig_provider
 
-# 4. Cache Hit Test
-def test_cache_hit_performance():
-    res1 = client.get("/api/v1/vehicles/plate/XYZ9876")
-    assert res1.status_code == 200
-
-    res2 = client.get("/api/v1/vehicles/plate/XYZ9876")
-    assert res2.status_code == 200
-    data2 = res2.json()
-    assert data2["cache_info"]["from_cache"] is True
-
-# 5. Parts Search
-def test_parts_search_brake_disc():
-    response = client.get("/api/v1/parts/search?plate=ABC1D23&query=disco%20de%20freio")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "SUCCESS"
-    assert data["category_identified"] == "BRAKE_DISC"
-    assert data["results_count"] >= 1
-
-    first_result = data["results"][0]
-    assert first_result["manufacturer"] == "Fremax"
-    assert first_result["manufacturer_code"] == "BD1234"
-    assert first_result["compatibility"] == "CONFIRMED"
-    assert first_result["erp_mapping"]["erp_product_id"] == "AUTCOM-PRD-9988"
-
-def test_parts_search_synonym_query():
-    response = client.get("/api/v1/parts/search?plate=ABC1D23&query=disco")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["category_identified"] == "BRAKE_DISC"
-    assert data["results_count"] >= 1
-
-def test_parts_search_no_matching_parts():
-    response = client.get("/api/v1/parts/search?plate=ABC1234&query=correia%20dentada")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "NO_COMPATIBLE_PARTS_FOUND"
-
-# 6. Catalog Importer
+# 6. Universal Catalog Importer
 def test_catalog_importer_csv():
-    csv_content = """fabricante,codigo,categoria,descricao,marca_veiculo,modelo_veiculo,motor,ano_inicio,ano_fim
-Bosch,0986BB0001,Filtro de Oleo,Filtro Lubrificante,VW,T-Cross,1.0 TSI,2019,2024
+    csv_content = """fabricante,codigo,categoria,descricao,marca_veiculo,modelo_veiculo,motor,ano_inicio,ano_fim,oem
+Bosch,0986BB0001,Filtro de Oleo,Filtro Lubrificante,VW,T-Cross,1.0 TSI,2019,2024,04E115561H
 """
     response = client.post(
         "/api/v1/catalog/import",

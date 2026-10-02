@@ -4,15 +4,15 @@ from pydantic import BaseModel, ConfigDict
 
 # Vehicle Schemas
 class VehicleResponseSchema(BaseModel):
-    id: int
+    id: Optional[int] = None
     make: str
     model: str
-    version: Optional[str] = ""
-    year_manufacture: int
-    year_model: int
-    engine: Optional[str] = ""
-    fuel: Optional[str] = ""
-    transmission: Optional[str] = ""
+    version: Optional[str] = None
+    year_manufacture: Optional[int] = None
+    year_model: Optional[int] = None
+    engine: Optional[str] = None
+    fuel: Optional[str] = None
+    transmission: Optional[str] = None
     fipe_code: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -55,9 +55,13 @@ class PartResultSchema(BaseModel):
     description: str
     category: str
     position: Optional[str] = None
+    axis: Optional[str] = None
     compatibility: str
     confidence_score: float
     source: str
+    oem_codes: Optional[str] = None
+    equivalent_codes: Optional[str] = None
+    technical_specs: Optional[str] = None
     notes: Optional[str] = None
     cross_references: List[CrossReferenceSchema] = []
     erp_mapping: Optional[ERPProductMappingSchema] = None

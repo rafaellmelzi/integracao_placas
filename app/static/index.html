@@ -3,17 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel Administrativo - AutoParts API ERP Autcom</title>
+    <title>Consulta & Aplicabilidade de Autopeças - Admin</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
         body { background-color: #f8f9fa; }
-        .sidebar { min-height: 100vh; background-color: #1e293b; color: white; }
-        .sidebar .nav-link { color: #cbd5e1; font-weight: 500; margin-bottom: 0.5rem; }
-        .sidebar .nav-link:hover, .sidebar .nav-link.active { color: white; background-color: #334155; border-radius: 6px; }
-        .card { border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .sidebar { min-height: 100vh; background-color: #0f172a; color: white; }
+        .sidebar .nav-link { color: #94a3b8; font-weight: 500; margin-bottom: 0.5rem; }
+        .sidebar .nav-link:hover, .sidebar .nav-link.active { color: white; background-color: #1e293b; border-radius: 6px; }
+        .card { border-radius: 10px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .badge-confirmed { background-color: #10b981; }
-        .badge-ambiguous { background-color: #f59e0b; }
+        .badge-demo { background-color: #6366f1; }
+        .badge-import { background-color: #0284c7; }
         .status-pill { font-size: 0.85rem; font-weight: 600; padding: 0.35em 0.65em; border-radius: 50rem; }
     </style>
 </head>
@@ -23,21 +24,21 @@
     <div class="row">
         <!-- Sidebar -->
         <div class="col-md-3 col-lg-2 sidebar p-3 d-flex flex-column">
-            <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-gear-wide-connected me-2"></i>AutoParts Admin</h5>
+            <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-gear-wide-connected me-2"></i>AutoParts ERP</h5>
 
-            <!-- System Status Badges -->
+            <!-- Status Badges -->
             <div class="card bg-dark text-white p-2 mb-4 border-secondary small">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span>Banco:</span>
-                    <span id="stDb" class="badge bg-secondary status-pill">Verificando...</span>
+                    <span id="stDb" class="badge bg-secondary status-pill">Carregando...</span>
                 </div>
                 <div class="d-flex justify-content-between align-items-center mb-1">
-                    <span>Prov. Placa:</span>
-                    <span id="stPlate" class="badge bg-secondary status-pill">Verificando...</span>
+                    <span>Provedor Placa:</span>
+                    <span id="stPlate" class="badge bg-secondary status-pill">Carregando...</span>
                 </div>
                 <div class="d-flex justify-content-between align-items-center mb-1">
-                    <span>Catálogo:</span>
-                    <span id="stCatalog" class="badge bg-secondary status-pill">Verificando...</span>
+                    <span>Catálogo Peças:</span>
+                    <span id="stCatalog" class="badge bg-secondary status-pill">Carregando...</span>
                 </div>
                 <div class="d-flex justify-content-between align-items-center">
                     <span>Ambiente:</span>
@@ -47,10 +48,10 @@
 
             <ul class="nav nav-pills flex-column mb-auto">
                 <li class="nav-item">
-                    <a href="#" class="nav-link active" onclick="switchTab('plateTab')"><i class="bi bi-search me-2"></i>Consulta por Placa</a>
+                    <a href="#" class="nav-link active" onclick="switchTab('partsSearchTab')"><i class="bi bi-search me-2"></i>Consulta de Peças</a>
                 </li>
                 <li class="nav-item">
-                    <a href="#" class="nav-link" onclick="switchTab('partsTab')"><i class="bi bi-tools me-2"></i>Pesquisa de Peças</a>
+                    <a href="#" class="nav-link" onclick="switchTab('plateTab')"><i class="bi bi-card-heading me-2"></i>Consulta por Placa</a>
                 </li>
                 <li class="nav-item">
                     <a href="#" class="nav-link" onclick="switchTab('importTab')"><i class="bi bi-file-earmark-arrow-up me-2"></i>Importar Catálogo</a>
@@ -65,98 +66,140 @@
 
         <!-- Main Content -->
         <div class="col-md-9 col-lg-10 p-4">
-            <!-- Alert Banner for Real/Mock mode -->
-            <div id="modeAlert" class="alert alert-warning d-flex align-items-center mb-4" role="alert">
-                <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
-                <div>
-                    <strong>MODO MOCK / DESENVOLVIMENTO ATIVO:</strong> O sistema está executando com dados simulados para testes. Em modo de produção com API key configurada, o badge indicará <strong>DADOS REAIS</strong>.
+
+            <!-- Alert Banner for Plate Provider Fallback -->
+            <div id="plateNoticeBanner" class="alert alert-info d-flex align-items-center mb-4" role="alert" style="display:none;">
+                <i class="bi bi-info-circle-fill me-2 fs-5"></i>
+                <div id="plateNoticeText">
+                    Consulta automática por placa não configurada em produção. Selecione o veículo manualmente nos filtros abaixo.
                 </div>
             </div>
 
-            <!-- 1. Plate Lookup Tab -->
-            <div id="plateTab" class="tab-content">
-                <h3 class="fw-bold mb-4">Consulta de Veículo por Placa</h3>
+            <!-- 1. Parts Search Tab (Manual Cascading Selection or Term) -->
+            <div id="partsSearchTab" class="tab-content">
+                <h3 class="fw-bold mb-4">Consulta & Aplicabilidade de Peças por Veículo</h3>
+
+                <div class="card p-4 mb-4">
+                    <h5 class="fw-bold mb-3 text-secondary"><i class="bi bi-car-front me-2"></i>1. Identifique o Veículo</h5>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold">Marca</label>
+                            <select id="selMake" class="form-select" onchange="onMakeChange()">
+                                <option value="">-- Selecione --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Modelo</label>
+                            <select id="selModel" class="form-select" onchange="onModelChange()" disabled>
+                                <option value="">-- Selecione --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold">Ano</label>
+                            <select id="selYear" class="form-select" onchange="onYearChange()" disabled>
+                                <option value="">-- Selecione --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-bold">Versão</label>
+                            <select id="selVersion" class="form-select" onchange="onVersionChange()" disabled>
+                                <option value="">-- Selecione --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label fw-bold">Motor</label>
+                            <select id="selEngine" class="form-select" disabled>
+                                <option value="">-- Selecione --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row align-items-center my-2">
+                        <div class="col"><hr></div>
+                        <div class="col-auto text-muted fw-bold">OU POR PLACA</div>
+                        <div class="col"><hr></div>
+                    </div>
+
+                    <div class="row g-3 align-items-center">
+                        <div class="col-md-4">
+                            <input type="text" id="quickPlateInput" class="form-control text-uppercase" placeholder="Digite a placa (ex: ABC1D23)">
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <h5 class="fw-bold mb-3 text-secondary"><i class="bi bi-search me-2"></i>2. O que você procura?</h5>
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <input type="text" id="partQueryInput" class="form-control form-control-lg" placeholder="Ex: disco de freio, pastilha, filtro de óleo, amortecedor..." value="disco de freio">
+                        </div>
+                        <div class="col-md-4">
+                            <button class="btn btn-primary btn-lg w-100 fw-bold" onclick="performPartsSearch()"><i class="bi bi-search me-2"></i>PESQUISAR PEÇAS</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Search Results -->
+                <div id="partsResultsContainer" class="card p-4" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold m-0">Peças Encontradas: <span id="resCount" class="text-primary">0</span></h5>
+                        <span id="resStatusBadge" class="badge bg-success p-2"></span>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Fabricante</th>
+                                    <th>Código</th>
+                                    <th>Descrição</th>
+                                    <th>Posição / Eixo</th>
+                                    <th>Código OEM</th>
+                                    <th>Origem do Dado</th>
+                                    <th>Compatibilidade</th>
+                                </tr>
+                            </thead>
+                            <tbody id="partsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Direct Plate Lookup Tab -->
+            <div id="plateTab" class="tab-content" style="display:none;">
+                <h3 class="fw-bold mb-4">Consulta Direta por Placa</h3>
                 <div class="card p-4 mb-4">
                     <div class="row g-3 align-items-center">
                         <div class="col-md-6">
-                            <label for="plateInput" class="form-label fw-bold">Placa do Veículo (Antiga ou Mercosul)</label>
-                            <input type="text" id="plateInput" class="form-control form-control-lg text-uppercase" placeholder="Ex: ABC1D23 ou ABC1234" value="ABC1D23">
+                            <label for="directPlateInput" class="form-label fw-bold">Placa do Veículo</label>
+                            <input type="text" id="directPlateInput" class="form-control form-control-lg text-uppercase" placeholder="ABC1D23" value="ABC1D23">
                         </div>
                         <div class="col-md-3 align-self-end">
-                            <button class="btn btn-primary btn-lg w-100" onclick="searchPlate()"><i class="bi bi-search me-2"></i>Consultar</button>
+                            <button class="btn btn-primary btn-lg w-100" onclick="searchDirectPlate()"><i class="bi bi-search me-2"></i>Consultar Placa</button>
                         </div>
                     </div>
                 </div>
 
-                <div id="plateResultContainer" style="display:none;">
-                    <div class="card p-4">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h4 id="vehicleTitle" class="fw-bold m-0"></h4>
-                            <div>
-                                <span id="vehicleDataModeBadge" class="badge bg-secondary p-2 me-2"></span>
-                                <span id="vehicleStatusBadge" class="badge bg-success p-2"></span>
-                            </div>
-                        </div>
-                        <div class="row g-3" id="vehicleDetailsGrid"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 2. Parts Search Tab -->
-            <div id="partsTab" class="tab-content" style="display:none;">
-                <h3 class="fw-bold mb-4">Pesquisa de Peças Aplicáveis</h3>
-                <div class="card p-4 mb-4">
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <label for="partsPlateInput" class="form-label fw-bold">Placa</label>
-                            <input type="text" id="partsPlateInput" class="form-control text-uppercase" placeholder="ABC1D23" value="ABC1D23">
-                        </div>
-                        <div class="col-md-5">
-                            <label for="partsQueryInput" class="form-label fw-bold">Produto / Peça</label>
-                            <input type="text" id="partsQueryInput" class="form-control" placeholder="Ex: disco de freio, pastilha, filtro..." value="disco de freio">
-                        </div>
-                        <div class="col-md-3 align-self-end">
-                            <button class="btn btn-success w-100" onclick="searchParts()"><i class="bi bi-search me-2"></i>Buscar Peças</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="partsResultContainer" style="display:none;">
-                    <div class="card p-4">
-                        <h5 class="fw-bold mb-3">Resultados Encontrados: <span id="partsCount" class="text-primary">0</span></h5>
-                        <div class="table-responsive">
-                            <table class="table table-hover align-middle">
-                                <thead class="table-dark">
-                                    <tr>
-                                        <th>Fabricante</th>
-                                        <th>Código</th>
-                                        <th>Descrição</th>
-                                        <th>Posição</th>
-                                        <th>Compatibilidade</th>
-                                        <th>Mapeamento Autcom ERP</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="partsTableBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
+                <div id="plateResultContainer" class="card p-4" style="display:none;">
+                    <h4 id="vehicleTitle" class="fw-bold mb-3"></h4>
+                    <div id="vehicleDetailsGrid" class="row g-3"></div>
                 </div>
             </div>
 
             <!-- 3. Catalog Import Tab -->
             <div id="importTab" class="tab-content" style="display:none;">
-                <h3 class="fw-bold mb-4">Importação de Catálogos de Aplicabilidade</h3>
+                <h3 class="fw-bold mb-4">Importador Universal de Catálogos</h3>
                 <div class="card p-4 mb-4">
                     <form id="importForm" enctype="multipart/form-data">
                         <div class="mb-3">
-                            <label for="fileInput" class="form-label fw-bold">Selecione Arquivo do Catálogo (CSV, XLSX, JSON, XML)</label>
+                            <label for="fileInput" class="form-label fw-bold">Arquivo de Catálogo (CSV, XLSX, JSON, XML)</label>
                             <input type="file" id="fileInput" class="form-control" accept=".csv,.xlsx,.json,.xml" required>
                         </div>
-                        <button type="button" class="btn btn-primary" onclick="uploadCatalog()"><i class="bi bi-upload me-2"></i>Importar Catálogo</button>
+                        <button type="button" class="btn btn-success fw-bold" onclick="uploadCatalog()"><i class="bi bi-upload me-2"></i>Importar Catálogo</button>
                     </form>
                 </div>
                 <div id="importResultContainer" class="card p-4" style="display:none;">
-                    <h5 class="fw-bold">Resultado da Importação</h5>
+                    <h5 class="fw-bold">Relatório de Importação</h5>
                     <pre id="importResultJson" class="bg-light p-3 border rounded"></pre>
                 </div>
             </div>
@@ -167,16 +210,16 @@
                 <div class="card p-4 mb-4">
                     <div class="row g-3">
                         <div class="col-md-4">
-                            <label class="form-label fw-bold">ID do Produto no Autcom</label>
-                            <input type="text" id="erpProdId" class="form-control" placeholder="Ex: AUTCOM-PRD-101">
+                            <label class="form-label fw-bold">ID do Produto Autcom</label>
+                            <input type="text" id="erpProdId" class="form-control" placeholder="AUTCOM-PRD-101">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label fw-bold">Código Fabricante</label>
-                            <input type="text" id="mfgCode" class="form-control" placeholder="Ex: BD1234">
+                            <input type="text" id="mfgCode" class="form-control" placeholder="BD1234">
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label fw-bold">EAN / Código de Barras</label>
-                            <input type="text" id="eanCode" class="form-control" placeholder="Ex: 7891234567890">
+                            <label class="form-label fw-bold">EAN</label>
+                            <input type="text" id="eanCode" class="form-control" placeholder="7891234567890">
                         </div>
                         <div class="col-md-12 text-end">
                             <button class="btn btn-primary" onclick="saveErpMapping()"><i class="bi bi-check-circle me-2"></i>Salvar Mapeamento</button>
@@ -184,75 +227,184 @@
                     </div>
                 </div>
             </div>
+
         </div>
     </div>
 </div>
 
 <script>
-    document.addEventListener("DOMContentLoaded", loadHealthStatus);
+    document.addEventListener("DOMContentLoaded", () => {
+        loadHealthStatus();
+        loadVehicleMakes();
+    });
 
     async function loadHealthStatus() {
         try {
             const res = await fetch('/health');
             const data = await res.json();
 
-            // DB
-            const stDb = document.getElementById('stDb');
-            if (data.database === 'connected') {
-                stDb.className = 'badge bg-success status-pill';
-                stDb.innerText = '🟢 Conectado';
+            document.getElementById('stDb').innerText = data.database === 'connected' ? '🟢 Conectado' : '🔴 Erro';
+            document.getElementById('stDb').className = data.database === 'connected' ? 'badge bg-success status-pill' : 'badge bg-danger status-pill';
+
+            document.getElementById('stPlate').innerText = data.plate_provider_available ? `🟢 ${data.plate_provider}` : '🔴 Não Configurado';
+            document.getElementById('stPlate').className = data.plate_provider_available ? 'badge bg-success status-pill' : 'badge bg-danger status-pill';
+
+            document.getElementById('stCatalog').innerText = `${data.catalog_parts_count} Peças`;
+            document.getElementById('stCatalog').className = data.catalog_parts_count > 0 ? 'badge bg-success status-pill' : 'badge bg-danger status-pill';
+
+            document.getElementById('stEnv').innerText = data.app_env.toUpperCase();
+
+            const noticeBanner = document.getElementById('plateNoticeBanner');
+            if (!data.plate_provider_available) {
+                noticeBanner.style.display = 'flex';
             } else {
-                stDb.className = 'badge bg-danger status-pill';
-                stDb.innerText = '🔴 Erro';
+                noticeBanner.style.display = 'none';
             }
-
-            // Plate Provider
-            const stPlate = document.getElementById('stPlate');
-            if (data.plate_provider_status === 'configured') {
-                stPlate.className = 'badge bg-success status-pill';
-                stPlate.innerText = `🟢 ${data.plate_provider}`;
-            } else {
-                stPlate.className = 'badge bg-danger status-pill';
-                stPlate.innerText = '🔴 Não Configurado';
-            }
-
-            // Catalog
-            const stCatalog = document.getElementById('stCatalog');
-            if (data.catalog_status === 'configured') {
-                stCatalog.className = 'badge bg-success status-pill';
-                stCatalog.innerText = `🟢 Configurado (${data.catalog_parts_count})`;
-            } else {
-                stCatalog.className = 'badge bg-danger status-pill';
-                stCatalog.innerText = '🔴 Sem Peças';
-            }
-
-            // Env Alert Banner
-            const stEnv = document.getElementById('stEnv');
-            const alertBanner = document.getElementById('modeAlert');
-            stEnv.innerText = data.app_env.toUpperCase();
-
-            if (data.app_env === 'production' && data.plate_provider !== 'MOCK') {
-                alertBanner.className = 'alert alert-success d-flex align-items-center mb-4';
-                alertBanner.innerHTML = `<i class="bi bi-check-circle-fill me-2 fs-5"></i><div><strong>MODO DE PRODUÇÃO COM DADOS REAIS ATIVO:</strong> As consultas estão utilizando o provedor oficial <strong>${data.plate_provider}</strong>.</div>`;
-            } else {
-                alertBanner.className = 'alert alert-warning d-flex align-items-center mb-4';
-                alertBanner.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i><div><strong>AMBIENTE DE DESENVOLVIMENTO / MOCK ATIVO:</strong> Consultas utilizando simulação. Para consultas reais de produção, configure <code>APP_ENV=production</code> e insira sua <code>VEHICLE_API_KEY</code> no arquivo <code>.env</code>.</div>`;
-            }
-
         } catch (e) {
             console.error('Error fetching health status', e);
         }
     }
 
-    function switchTab(tabId) {
-        document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
-        document.getElementById(tabId).style.display = 'block';
-        document.querySelectorAll('.sidebar .nav-link').forEach(el => el.classList.remove('active'));
-        event.currentTarget.classList.add('active');
+    async function loadVehicleMakes() {
+        try {
+            const res = await fetch('/api/v1/vehicles/makes');
+            const makes = await res.json();
+            const selMake = document.getElementById('selMake');
+            selMake.innerHTML = '<option value="">-- Selecione --</option>';
+            makes.forEach(m => {
+                selMake.innerHTML += `<option value="${m.id}" data-name="${m.name}">${m.name}</option>`;
+            });
+        } catch (e) {
+            console.error('Error loading makes', e);
+        }
     }
 
-    async function searchPlate() {
-        const plate = document.getElementById('plateInput').value.trim();
+    async function onMakeChange() {
+        const makeId = document.getElementById('selMake').value;
+        const selModel = document.getElementById('selModel');
+        selModel.innerHTML = '<option value="">-- Selecione --</option>';
+        selModel.disabled = !makeId;
+
+        document.getElementById('selYear').innerHTML = '<option value="">-- Selecione --</option>';
+        document.getElementById('selYear').disabled = true;
+        document.getElementById('selVersion').innerHTML = '<option value="">-- Selecione --</option>';
+        document.getElementById('selVersion').disabled = true;
+        document.getElementById('selEngine').innerHTML = '<option value="">-- Selecione --</option>';
+        document.getElementById('selEngine').disabled = true;
+
+        if (!makeId) return;
+
+        const res = await fetch(`/api/v1/vehicles/makes/${makeId}/models`);
+        const models = await res.json();
+        models.forEach(m => {
+            selModel.innerHTML += `<option value="${m.id}" data-name="${m.name}">${m.name}</option>`;
+        });
+    }
+
+    async function onModelChange() {
+        const modelId = document.getElementById('selModel').value;
+        const selYear = document.getElementById('selYear');
+        selYear.innerHTML = '<option value="">-- Selecione --</option>';
+        selYear.disabled = !modelId;
+
+        if (!modelId) return;
+
+        const res = await fetch(`/api/v1/vehicles/models/${modelId}/years`);
+        const years = await res.json();
+        years.forEach(y => {
+            selYear.innerHTML += `<option value="${y.year}">${y.year}</option>`;
+        });
+    }
+
+    async function onYearChange() {
+        const modelId = document.getElementById('selModel').value;
+        const year = document.getElementById('selYear').value;
+        const selVersion = document.getElementById('selVersion');
+        selVersion.innerHTML = '<option value="">-- Selecione --</option>';
+        selVersion.disabled = !year;
+
+        if (!modelId || !year) return;
+
+        const res = await fetch(`/api/v1/vehicles/models/${modelId}/years/${year}/versions`);
+        const versions = await res.json();
+        versions.forEach(v => {
+            selVersion.innerHTML += `<option value="${v.id}" data-name="${v.name}">${v.name}</option>`;
+        });
+    }
+
+    async function onVersionChange() {
+        const versionId = document.getElementById('selVersion').value;
+        const selEngine = document.getElementById('selEngine');
+        selEngine.innerHTML = '<option value="">-- Selecione --</option>';
+        selEngine.disabled = !versionId;
+
+        if (!versionId) return;
+
+        const res = await fetch(`/api/v1/vehicles/versions/${versionId}/engines`);
+        const engines = await res.json();
+        engines.forEach(e => {
+            selEngine.innerHTML += `<option value="${e.description}">${e.description}</option>`;
+        });
+    }
+
+    async function performPartsSearch() {
+        const quickPlate = document.getElementById('quickPlateInput').value.trim();
+        const query = document.getElementById('partQueryInput').value.trim();
+
+        let url = `/api/v1/parts/search?query=${encodeURIComponent(query)}`;
+
+        if (quickPlate) {
+            url += `&plate=${quickPlate}`;
+        } else {
+            const makeOpt = document.getElementById('selMake').selectedOptions[0];
+            const modelOpt = document.getElementById('selModel').selectedOptions[0];
+            const yearVal = document.getElementById('selYear').value;
+            const verOpt = document.getElementById('selVersion').selectedOptions[0];
+            const engVal = document.getElementById('selEngine').value;
+
+            if (makeOpt && makeOpt.dataset.name) url += `&make=${encodeURIComponent(makeOpt.dataset.name)}`;
+            if (modelOpt && modelOpt.dataset.name) url += `&model=${encodeURIComponent(modelOpt.dataset.name)}`;
+            if (yearVal) url += `&year=${yearVal}`;
+            if (verOpt && verOpt.dataset.name) url += `&version=${encodeURIComponent(verOpt.dataset.name)}`;
+            if (engVal) url += `&engine=${encodeURIComponent(engVal)}`;
+        }
+
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+
+            document.getElementById('partsResultsContainer').style.display = 'block';
+            document.getElementById('resCount').innerText = data.results_count || 0;
+            document.getElementById('resStatusBadge').innerText = data.status;
+
+            const tbody = document.getElementById('partsTableBody');
+            tbody.innerHTML = '';
+
+            if (data.results && data.results.length > 0) {
+                data.results.forEach(item => {
+                    const srcBadgeClass = item.source.includes('DEMO') ? 'badge badge-demo' : 'badge badge-import';
+                    tbody.innerHTML += `
+                        <tr>
+                            <td><strong>${item.manufacturer}</strong></td>
+                            <td><span class="badge bg-dark">${item.manufacturer_code}</span></td>
+                            <td>${item.description}</td>
+                            <td>${item.position || 'Dianteiro'}</td>
+                            <td><code>${item.oem_codes || 'N/A'}</code></td>
+                            <td><span class="${srcBadgeClass}">${item.source}</span></td>
+                            <td><span class="badge badge-confirmed">${item.compatibility}</span></td>
+                        </tr>
+                    `;
+                });
+            } else {
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted p-4">${data.message || 'Nenhuma peça encontrada.'}</td></tr>`;
+            }
+        } catch (e) {
+            alert('Erro ao pesquisar peças: ' + e);
+        }
+    }
+
+    async function searchDirectPlate() {
+        const plate = document.getElementById('directPlateInput').value.trim();
         if (!plate) return alert('Digite uma placa!');
 
         try {
@@ -260,73 +412,21 @@
             const data = await res.json();
 
             document.getElementById('plateResultContainer').style.display = 'block';
-            const modeBadge = document.getElementById('vehicleDataModeBadge');
-
-            if (data.cache_info && data.cache_info.source === 'MOCK_PROVIDER') {
-                modeBadge.className = 'badge bg-warning text-dark p-2 me-2';
-                modeBadge.innerText = '⚠️ MOCK / SIMULADO';
-            } else {
-                modeBadge.className = 'badge bg-primary p-2 me-2';
-                modeBadge.innerText = '🟢 DADOS REAIS';
-            }
-
             if (data.vehicle) {
                 document.getElementById('vehicleTitle').innerText = `${data.vehicle.make} ${data.vehicle.model} ${data.vehicle.version || ''}`;
-                document.getElementById('vehicleStatusBadge').innerText = data.status;
-                document.getElementById('vehicleStatusBadge').className = data.is_ambiguous ? 'badge badge-ambiguous p-2' : 'badge badge-confirmed p-2';
-
                 document.getElementById('vehicleDetailsGrid').innerHTML = `
                     <div class="col-md-3"><strong>Ano Fab/Mod:</strong> ${data.vehicle.year_manufacture}/${data.vehicle.year_model}</div>
                     <div class="col-md-3"><strong>Motor:</strong> ${data.vehicle.engine || 'N/I'}</div>
                     <div class="col-md-3"><strong>Combustível:</strong> ${data.vehicle.fuel || 'N/I'}</div>
                     <div class="col-md-3"><strong>Transmissão:</strong> ${data.vehicle.transmission || 'N/I'}</div>
-                    <div class="col-md-3"><strong>Código FIPE:</strong> ${data.vehicle.fipe_code || 'N/A'}</div>
-                    <div class="col-md-3"><strong>Origem Cache:</strong> ${data.cache_info.source}</div>
-                    <div class="col-md-3"><strong>Qualidade Dados:</strong> ${data.cache_info.data_quality}</div>
+                    <div class="col-md-3"><strong>FIPE:</strong> ${data.vehicle.fipe_code || 'N/A'}</div>
                 `;
             } else {
                 document.getElementById('vehicleTitle').innerText = 'Veículo não encontrado';
-                document.getElementById('vehicleStatusBadge').innerText = data.status;
-                document.getElementById('vehicleDetailsGrid').innerHTML = `<div class="col-12 text-danger">${data.message || 'Sem informações disponíveis.'}</div>`;
+                document.getElementById('vehicleDetailsGrid').innerHTML = `<div class="col-12 text-danger">${data.message}</div>`;
             }
         } catch (e) {
             alert('Erro ao consultar placa: ' + e);
-        }
-    }
-
-    async function searchParts() {
-        const plate = document.getElementById('partsPlateInput').value.trim();
-        const query = document.getElementById('partsQueryInput').value.trim();
-        if (!plate || !query) return alert('Preencha a placa e o produto!');
-
-        try {
-            const res = await fetch(`/api/v1/parts/search?plate=${plate}&query=${encodeURIComponent(query)}`);
-            const data = await res.json();
-
-            document.getElementById('partsResultContainer').style.display = 'block';
-            document.getElementById('partsCount').innerText = data.results_count || 0;
-
-            const tbody = document.getElementById('partsTableBody');
-            tbody.innerHTML = '';
-
-            if (data.results && data.results.length > 0) {
-                data.results.forEach(item => {
-                    tbody.innerHTML += `
-                        <tr>
-                            <td><strong>${item.manufacturer}</strong></td>
-                            <td><span class="badge bg-secondary">${item.manufacturer_code}</span></td>
-                            <td>${item.description}</td>
-                            <td>${item.position}</td>
-                            <td><span class="badge badge-confirmed">${item.compatibility}</span></td>
-                            <td>${item.erp_mapping ? `<span class="badge bg-success">${item.erp_mapping.erp_product_id}</span>` : '<span class="badge bg-warning text-dark">Não Mapeado</span>'}</td>
-                        </tr>
-                    `;
-                });
-            } else {
-                tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">Nenhuma peça compatível encontrada (${data.status}).</td></tr>`;
-            }
-        } catch (e) {
-            alert('Erro ao buscar peças: ' + e);
         }
     }
 
@@ -356,7 +456,7 @@
         const manufacturer_code = document.getElementById('mfgCode').value.trim();
         const ean = document.getElementById('eanCode').value.trim();
 
-        if (!erp_product_id) return alert('Digite o ID do produto no Autcom!');
+        if (!erp_product_id) return alert('Digite o ID do produto Autcom!');
 
         try {
             const res = await fetch('/api/v1/erp/mapping', {
@@ -364,11 +464,17 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ erp_product_id, manufacturer_code, ean, verified: true })
             });
-            const data = await res.json();
-            alert('Mapeamento salvo com sucesso!');
+            alert('Mapeamento salvo!');
         } catch (e) {
             alert('Erro ao salvar mapeamento: ' + e);
         }
+    }
+
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+        document.getElementById(tabId).style.display = 'block';
+        document.querySelectorAll('.sidebar .nav-link').forEach(el => el.classList.remove('active'));
+        event.currentTarget.classList.add('active');
     }
 </script>
 </body>

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import HTMLResponse
+from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, distinct
 
 from app.core.config import settings
 from app.db.database import get_db
@@ -12,7 +12,10 @@ from app.schemas.schemas import (
 from app.services.plate_lookup_service import PlateLookupService
 from app.services.parts_search_service import PartsSearchService
 from app.importers.catalog_importer import CatalogImporter
-from app.db.models import ERPProductMapping, ERPProductMappingType, ConfidenceLevel, Part
+from app.db.models import (
+    ERPProductMapping, ERPProductMappingType, ConfidenceLevel, Part,
+    VehicleMake, VehicleModel, VehicleVersion, VehicleEngine, Vehicle
+)
 
 router = APIRouter()
 
@@ -36,10 +39,75 @@ def health_check(db: Session = Depends(get_db)):
         "app_env": settings.APP_ENV,
         "database": db_status,
         "plate_provider": settings.VEHICLE_PROVIDER,
-        "plate_provider_status": plate_provider_status,
+        "plate_provider_available": plate_provider_status == "configured",
         "catalog_status": catalog_status,
         "catalog_parts_count": catalog_parts_count
     }
+
+# --- Cascading Vehicle Dropdown Endpoints ---
+
+@router.get("/vehicles/makes")
+def get_vehicle_makes(db: Session = Depends(get_db)):
+    """
+    Get list of all vehicle makes in database.
+    """
+    makes = db.query(VehicleMake).order_by(VehicleMake.name).all()
+    return [{"id": m.id, "name": m.name} for m in makes]
+
+@router.get("/vehicles/makes/{make_id}/models")
+def get_vehicle_models(make_id: int, db: Session = Depends(get_db)):
+    """
+    Get list of models for a specific vehicle make.
+    """
+    models = db.query(VehicleModel).filter(VehicleModel.make_id == make_id).order_by(VehicleModel.name).all()
+    return [{"id": m.id, "name": m.name} for m in models]
+
+@router.get("/vehicles/models/{model_id}/years")
+def get_vehicle_years(model_id: int, db: Session = Depends(get_db)):
+    """
+    Get list of available model years for a vehicle model.
+    """
+    years_mfg = db.query(distinct(Vehicle.year_manufacture)).filter(Vehicle.model_id == model_id).all()
+    years_mod = db.query(distinct(Vehicle.year_model)).filter(Vehicle.model_id == model_id).all()
+
+    unique_years = sorted(list(set([y[0] for y in years_mfg if y[0]] + [y[0] for y in years_mod if y[0]])), reverse=True)
+    return [{"year": y} for y in unique_years]
+
+@router.get("/vehicles/models/{model_id}/years/{year}/versions")
+def get_vehicle_versions(model_id: int, year: int, db: Session = Depends(get_db)):
+    """
+    Get versions for a specific vehicle model and year.
+    """
+    vehicles = db.query(Vehicle).filter(
+        Vehicle.model_id == model_id,
+        (Vehicle.year_manufacture == year) | (Vehicle.year_model == year)
+    ).all()
+
+    versions = []
+    seen = set()
+    for v in vehicles:
+        if v.version and v.version.id not in seen:
+            seen.add(v.version.id)
+            versions.append({"id": v.version.id, "name": v.version.name})
+
+    return versions
+
+@router.get("/vehicles/versions/{version_id}/engines")
+def get_vehicle_engines(version_id: int, db: Session = Depends(get_db)):
+    """
+    Get engines for a specific vehicle version.
+    """
+    vehicles = db.query(Vehicle).filter(Vehicle.version_id == version_id).all()
+    engines = []
+    seen = set()
+    for v in vehicles:
+        if v.engine and v.engine.id not in seen:
+            seen.add(v.engine.id)
+            engines.append({"id": v.engine.id, "description": v.engine.description, "displacement": v.engine.displacement})
+
+    return engines
+
+# --- Vehicle Lookup and Parts Search ---
 
 @router.get("/vehicles/plate/{plate}", response_model=PlateLookupResponseSchema)
 def lookup_vehicle_by_plate(plate: str, db: Session = Depends(get_db)):
@@ -57,16 +125,31 @@ def lookup_vehicle_by_plate(plate: str, db: Session = Depends(get_db)):
 
 @router.get("/parts/search", response_model=PartsSearchResponseSchema)
 def search_parts(
-    plate: str = Query(..., description="Vehicle plate number"),
-    query: str = Query(..., description="Part query term, e.g. 'disco de freio'"),
+    plate: Optional[str] = Query(None, description="Vehicle plate number"),
+    make: Optional[str] = Query(None, description="Vehicle make (e.g. Volkswagen)"),
+    model: Optional[str] = Query(None, description="Vehicle model (e.g. T-Cross)"),
+    year: Optional[int] = Query(None, description="Vehicle year (e.g. 2023)"),
+    version: Optional[str] = Query(None, description="Vehicle version (e.g. Comfortline)"),
+    engine: Optional[str] = Query(None, description="Vehicle engine (e.g. 1.0 TSI)"),
+    category: Optional[str] = Query(None, description="Part category code"),
+    query: Optional[str] = Query(None, description="Part query term, e.g. 'disco de freio'"),
     db: Session = Depends(get_db)
 ):
     """
-    Search for compatible auto parts by vehicle plate and item name/category.
+    Search for compatible auto parts by plate OR direct vehicle parameters.
     """
     try:
         service = PartsSearchService(db)
-        return service.search_parts_by_plate_and_query(plate, query)
+        return service.search_parts(
+            plate=plate,
+            make=make,
+            model=model,
+            year=year,
+            version=version,
+            engine=engine,
+            category=category,
+            query=query
+        )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
@@ -101,7 +184,7 @@ def create_or_update_erp_mapping(payload: ERPProductMappingCreateSchema, db: Ses
     return {"status": "SUCCESS", "erp_product_id": payload.erp_product_id}
 
 @router.post("/catalog/import")
-async def import_catalog_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_catalog_file(file: UploadFile = File(...), mapping_json: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Import catalog applicability data from CSV, XLSX, JSON, or XML files.
     """
@@ -109,14 +192,22 @@ async def import_catalog_file(file: UploadFile = File(...), db: Session = Depend
     filename = file.filename.lower()
     content_bytes = await file.read()
 
+    mapping_dict = None
+    if mapping_json:
+        import json
+        try:
+            mapping_dict = json.loads(mapping_json)
+        except Exception:
+            pass
+
     if filename.endswith(".csv"):
-        res = importer.import_from_csv(content_bytes.decode("utf-8", errors="ignore"), source_name=filename)
+        res = importer.import_from_csv(content_bytes.decode("utf-8", errors="ignore"), source_name=filename, column_mapping=mapping_dict)
     elif filename.endswith(".xlsx"):
-        res = importer.import_from_xlsx(content_bytes, source_name=filename)
+        res = importer.import_from_xlsx(content_bytes, source_name=filename, column_mapping=mapping_dict)
     elif filename.endswith(".json"):
-        res = importer.import_from_json(content_bytes.decode("utf-8", errors="ignore"), source_name=filename)
+        res = importer.import_from_json(content_bytes.decode("utf-8", errors="ignore"), source_name=filename, column_mapping=mapping_dict)
     elif filename.endswith(".xml"):
-        res = importer.import_from_xml(content_bytes.decode("utf-8", errors="ignore"), source_name=filename)
+        res = importer.import_from_xml(content_bytes.decode("utf-8", errors="ignore"), source_name=filename, column_mapping=mapping_dict)
     else:
         raise HTTPException(status_code=400, detail="Unsupported file format. Allowed: .csv, .xlsx, .json, .xml")
 

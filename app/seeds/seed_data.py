@@ -15,19 +15,19 @@ def seed_database():
     db = SessionLocal()
 
     try:
-        # Check if seed already performed
         if db.query(PartManufacturer).count() > 0:
             print("Database already seeded.")
             return
 
-        print("Seeding database with sample automotive data...")
+        print("Seeding database with DEMO automotive dataset...")
 
         # 1. Manufacturers & Categories
         fremax = PartManufacturer(name="Fremax", code="FREMAX")
         bosch = PartManufacturer(name="Bosch", code="BOSCH")
         cobreq = PartManufacturer(name="Cobreq", code="COBREQ")
         hipper = PartManufacturer(name="Hipper Freios", code="HIPPER")
-        db.add_all([fremax, bosch, cobreq, hipper])
+        mahle = PartManufacturer(name="Mahle", code="MAHLE")
+        db.add_all([fremax, bosch, cobreq, hipper, mahle])
         db.flush()
 
         cat_brake_disc = PartCategory(code="BRAKE_DISC", name="Disco de Freio", synonyms="DISCO,DISCO FREIO,DISCOS")
@@ -36,35 +36,42 @@ def seed_database():
         db.add_all([cat_brake_disc, cat_brake_pad, cat_oil_filter])
         db.flush()
 
-        # 2. Vehicles
+        # 2. Vehicles (VW T-Cross, VW Gol, GM Onix, Hyundai HB20)
         vw = VehicleMake(name="Volkswagen", normalized_name="VOLKSWAGEN")
         gm = VehicleMake(name="Chevrolet", normalized_name="CHEVROLET")
-        db.add_all([vw, gm])
+        hyundai = VehicleMake(name="Hyundai", normalized_name="HYUNDAI")
+        db.add_all([vw, gm, hyundai])
         db.flush()
 
         tcross = VehicleModel(make_id=vw.id, name="T-Cross", normalized_name="T-CROSS")
         gol = VehicleModel(make_id=vw.id, name="Gol", normalized_name="GOL")
         onix = VehicleModel(make_id=gm.id, name="Onix", normalized_name="ONIX")
-        db.add_all([tcross, gol, onix])
+        hb20 = VehicleModel(make_id=hyundai.id, name="HB20", normalized_name="HB20")
+        db.add_all([tcross, gol, onix, hb20])
         db.flush()
 
         v_comfortline = VehicleVersion(name="Comfortline 200 TSI", normalized_name="COMFORTLINE 200 TSI")
+        v_highline = VehicleVersion(name="Highline 250 TSI", normalized_name="HIGHLINE 250 TSI")
         v_lt = VehicleVersion(name="LT Turbo", normalized_name="LT TURBO")
-        db.add_all([v_comfortline, v_lt])
+        v_sense = VehicleVersion(name="Sense 1.0 Flex", normalized_name="SENSE 1.0 FLEX")
+        db.add_all([v_comfortline, v_highline, v_lt, v_sense])
         db.flush()
 
         eng_10_tsi = VehicleEngine(description="1.0 TSI", displacement="1.0", power_hp=128)
+        eng_14_tsi = VehicleEngine(description="1.4 TSI", displacement="1.4", power_hp=150)
         eng_10_turbo = VehicleEngine(description="1.0 Turbo", displacement="1.0", power_hp=116)
-        db.add_all([eng_10_tsi, eng_10_turbo])
+        eng_10_asp = VehicleEngine(description="1.0 Kappa", displacement="1.0", power_hp=80)
+        db.add_all([eng_10_tsi, eng_14_tsi, eng_10_turbo, eng_10_asp])
         db.flush()
 
         fuel_flex = VehicleFuel(name="Flex")
         trans_auto6 = VehicleTransmission(type="Automático 6v")
-        db.add_all([fuel_flex, trans_auto6])
+        trans_manual5 = VehicleTransmission(type="Manual 5v")
+        db.add_all([fuel_flex, trans_auto6, trans_manual5])
         db.flush()
 
-        # Specific Vehicle 1: VW T-Cross
-        v1 = Vehicle(
+        # Specific Vehicles
+        v_tcross_10 = Vehicle(
             make_id=vw.id,
             model_id=tcross.id,
             version_id=v_comfortline.id,
@@ -75,30 +82,61 @@ def seed_database():
             year_model=2023,
             fipe_code="005512-3"
         )
-        db.add(v1)
+        v_tcross_14 = Vehicle(
+            make_id=vw.id,
+            model_id=tcross.id,
+            version_id=v_highline.id,
+            engine_id=eng_14_tsi.id,
+            transmission_id=trans_auto6.id,
+            fuel_id=fuel_flex.id,
+            year_manufacture=2022,
+            year_model=2023,
+            fipe_code="005513-1"
+        )
+        v_hb20 = Vehicle(
+            make_id=hyundai.id,
+            model_id=hb20.id,
+            version_id=v_sense.id,
+            engine_id=eng_10_asp.id,
+            transmission_id=trans_manual5.id,
+            fuel_id=fuel_flex.id,
+            year_manufacture=2023,
+            year_model=2024,
+            fipe_code="015180-9"
+        )
+        db.add_all([v_tcross_10, v_tcross_14, v_hb20])
         db.flush()
 
-        # 3. Parts
+        # 3. DEMO Parts
         part_fremax_bd = Part(
             manufacturer_id=fremax.id,
             category_id=cat_brake_disc.id,
             manufacturer_part_number="BD1234",
             ean="7891234567890",
-            description="Disco de Freio Dianteiro Ventilado"
+            description="Disco de Freio Dianteiro Ventilado (276mm)",
+            oem_codes="5UQ615301, 5Z0615301",
+            technical_specs="Diâmetro: 276mm, Espessura: 24mm, Furos: 5",
+            source="DEMO_CATALOG_FREMAX"
         )
         part_hipper_hf = Part(
             manufacturer_id=hipper.id,
             category_id=cat_brake_disc.id,
             manufacturer_part_number="HF1234",
             ean="7891234567891",
-            description="Disco de Freio Dianteiro Ventilado HF"
+            description="Disco de Freio Dianteiro Ventilado HF (276mm)",
+            oem_codes="5UQ615301",
+            technical_specs="Diâmetro: 276mm, Espessura: 24mm, Furos: 5",
+            source="DEMO_CATALOG_HIPPER"
         )
         part_cobreq_pad = Part(
             manufacturer_id=cobreq.id,
             category_id=cat_brake_pad.id,
             manufacturer_part_number="N-1234",
             ean="7891234567892",
-            description="Jogo de Pastilhas de Freio Dianteiras"
+            description="Jogo de Pastilhas de Freio Dianteiras Teves",
+            oem_codes="5UQ698151",
+            technical_specs="Sistema: Teves, Comprimento: 155.4mm",
+            source="DEMO_CATALOG_COBREQ"
         )
         db.add_all([part_fremax_bd, part_hipper_hf, part_cobreq_pad])
         db.flush()
@@ -106,20 +144,24 @@ def seed_database():
         # 4. Applications
         app1 = PartApplication(
             part_id=part_fremax_bd.id,
-            vehicle_id=v1.id,
+            vehicle_id=v_tcross_10.id,
             year_from=2019,
             year_to=2024,
             position="Dianteiro",
-            source="CATALOG_FREMAX_OFFICIAL",
+            axis="Dianteiro",
+            notes="Somente versão 1.0 TSI",
+            source="DEMO_CATALOG_FREMAX",
             confidence=ConfidenceLevel.CONFIRMED
         )
         app2 = PartApplication(
             part_id=part_cobreq_pad.id,
-            vehicle_id=v1.id,
+            vehicle_id=v_tcross_10.id,
             year_from=2019,
             year_to=2024,
             position="Dianteiro",
-            source="CATALOG_COBREQ_OFFICIAL",
+            axis="Dianteiro",
+            notes="Somente versão 1.0 TSI",
+            source="DEMO_CATALOG_COBREQ",
             confidence=ConfidenceLevel.CONFIRMED
         )
         db.add_all([app1, app2])
@@ -147,7 +189,7 @@ def seed_database():
         db.add(erp_map1)
 
         db.commit()
-        print("Database seeded successfully with sample vehicles, parts, applications, cross-references, and Autcom ERP mappings!")
+        print("Database seeded successfully with DEMO automotive dataset!")
 
     except Exception as e:
         db.rollback()

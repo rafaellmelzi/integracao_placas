@@ -2,14 +2,13 @@ import enum
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import (
-    String, Integer, Float, Boolean, DateTime, Text, Enum, ForeignKey, Index, Table, Column, UniqueConstraint
+    String, Integer, Float, Boolean, DateTime, Text, Enum, ForeignKey, UniqueConstraint
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
     pass
 
-# Enum Definitions
 class ConfidenceLevel(str, enum.Enum):
     CONFIRMED = "CONFIRMED"
     HIGH_CONFIDENCE = "HIGH_CONFIDENCE"
@@ -79,8 +78,8 @@ class VehicleEngine(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    description: Mapped[str] = mapped_column(String(100), nullable=False) # e.g. 1.0 TSI, 1.6 16V
-    displacement: Mapped[Optional[str]] = mapped_column(String(20), nullable=True) # 1.0, 1.6, 2.0
+    description: Mapped[str] = mapped_column(String(100), nullable=False) # e.g. 1.0 TSI, 1.4 TSI
+    displacement: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     valves: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     power_hp: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
@@ -95,7 +94,7 @@ class VehicleFuel(Base):
     __tablename__ = "vehicle_fuel"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False) # Flex, Gasolina, Etanol, Diesel, Híbrido, Elétrico
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
 
 class Vehicle(Base):
     __tablename__ = "vehicle"
@@ -127,9 +126,9 @@ class VehiclePlateCache(Base):
     vehicle_id: Mapped[Optional[int]] = mapped_column(ForeignKey("vehicle.id"), nullable=True, index=True)
 
     is_ambiguous: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    possible_vehicle_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON / CSV string of alternate IDs
+    possible_vehicle_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    source: Mapped[str] = mapped_column(String(50), nullable=False) # e.g., APIPLACA, SERPRO, MOCK
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
     source_vehicle_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     consulted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -154,9 +153,9 @@ class PartCategory(Base):
     __tablename__ = "part_category"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True) # e.g. BRAKE_DISC
+    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    synonyms: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # Comma-separated or JSON list
+    synonyms: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 class Part(Base):
     __tablename__ = "part"
@@ -169,9 +168,13 @@ class Part(Base):
     ean: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    oem_codes: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # Comma-separated or JSON list
+    equivalent_codes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    technical_specs: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON or specs string
+    source: Mapped[str] = mapped_column(String(100), nullable=False, default="CATALOGO_OFICIAL")
+
     manufacturer: Mapped["PartManufacturer"] = relationship()
     category: Mapped["PartCategory"] = relationship()
-
     applications: Mapped[List["PartApplication"]] = relationship(back_populates="part", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -188,10 +191,11 @@ class PartApplication(Base):
     year_from: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     year_to: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     engine_spec: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    position: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # Dianteiro, Traseiro, D/T
+    position: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # Dianteiro, Traseiro
+    axis: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # Dianteiro, Traseiro
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    source: Mapped[str] = mapped_column(String(100), nullable=False, default="MANUFACTURER_CATALOG")
+    source: Mapped[str] = mapped_column(String(100), nullable=False, default="CATALOGO_FABRICANTE")
     source_updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     confidence: Mapped[ConfidenceLevel] = mapped_column(Enum(ConfidenceLevel), default=ConfidenceLevel.CONFIRMED, nullable=False)
 
@@ -216,7 +220,7 @@ class ERPProductMapping(Base):
     __tablename__ = "erp_product_mapping"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    erp_product_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True) # Autcom Product Code
+    erp_product_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     part_id: Mapped[Optional[int]] = mapped_column(ForeignKey("part.id"), nullable=True, index=True)
 
     manufacturer_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
@@ -236,7 +240,7 @@ class DataSource(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    type: Mapped[str] = mapped_column(String(50), nullable=False) # PLATE_API, CATALOG_FILE, etc.
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -258,6 +262,6 @@ class SyncLog(Base):
     records_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     records_success: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     records_failed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False) # SUCCESS, FAILED, COMPLETED_WITH_ERRORS
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
     details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
