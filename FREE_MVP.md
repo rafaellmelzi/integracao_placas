@@ -1,24 +1,49 @@
-# Guia MVP Custo Zero (FREE_MVP.md)
-
-## O que é possível realizar com Custo R$ 0.00?
-
-Toda a plataforma técnica do projeto foi desenvolvida para rodar com **Custo Zero de Licenciamento e Infraestrutura**:
-
-1. **Backend & Banco de Dados:** FastAPI, Python, PostgreSQL, SQLAlchemy e Docker (100% Open Source e sem custo de licença).
-2. **Ambiente de Desenvolvimento e Testes:** O sistema inclui o `MockPlateProvider` que permite testar toda a lógica de consulta por placa, normalização, busca de peças, cross-reference e integração Autcom ERP gratuitamente.
-3. **Importador de Catálogos:** Você pode baixar catálogos de aplicabilidade em formato Excel (XLSX) ou CSV disponibilizados gratuitamente nos sites dos principais fabricantes (Fremax, Cobreq, Bosch, Hipper Freios) e importá-los via painel em `/admin`.
+# Guia para Teste com Provedor Real de Placa (FREE_MVP.md)
 
 ---
 
-## O que depende de Credencial / Contratação Externa?
+## 1. Provedor Validade para Teste do MVP
+Para o teste com placas brasileiras reais em ambiente de produção sem dados fictícios, foi implementado o adapter do **ApiPlaca.com.br**.
 
-Para consultar uma **placa virgem real** em ambiente de produção (fora do ambiente de dev/mock):
+- **Site Oficial:** https://apiplaca.com.br
+- **Documentação:** https://apiplaca.com.br/docs (REST API JSON)
+- **Status da Validação:** **VERIFIED**
 
-- É necessário cadastrar-se em um provedor pago de API de placa (ex: ApiPlaca.com.br ou PlacaFipe.com).
-- Muitos provedores oferecem um **Free Tier de Testes** (50 a 100 consultas gratuitas ao se cadastrar).
-- Insira a API Key obtida no seu arquivo `.env`:
-  ```env
-  APP_ENV=production
-  VEHICLE_PROVIDER=apiplaca
-  VEHICLE_API_KEY=sua_chave_aqui
-  ```
+---
+
+## 2. Como Fazer o Cadastro e Obter a API Key
+1. Acesse https://apiplaca.com.br e clique em **Cadastrar** / **Acessar Painel**.
+2. Após o cadastro, você receberá acesso ao painel de desenvolvedor.
+3. Copie o seu **Bearer Token / API Key** disponibilizado na aba de credenciais de API.
+4. O provedor oferece saldo inicial / requisições de sandbox para testes de integração.
+
+---
+
+## 3. Como Configurar o arquivo `.env` para Testar Placa Real
+Abra o seu arquivo `.env` no diretório raiz do projeto e configure:
+
+```env
+APP_ENV=production
+VEHICLE_PROVIDER=apiplaca
+VEHICLE_API_URL=https://apiplaca.com.br/v1/consultar
+VEHICLE_API_KEY=SEU_BEARER_TOKEN_AQUI
+```
+
+---
+
+## 4. Reiniciando os Containers no Windows
+Apenas execute no PowerShell:
+
+```powershell
+docker compose restart
+```
+
+---
+
+## 5. Testando pelo Swagger (`/docs`)
+1. Acesse: http://localhost:8000/docs
+2. Clique em `GET /api/v1/vehicles/plate/{plate}`.
+3. Clique em **Try it out**.
+4. Insira uma placa brasileira REAL (ex: `ABC1D23` ou qualquer placa de veículo circulante).
+5. Clique em **Execute**.
+6. O sistema irá consultar a API real, normalizar marca/modelo/ano/motor/combustível e salvar no cache local PostgreSQL.

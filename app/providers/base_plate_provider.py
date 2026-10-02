@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 class BasePlateProvider(ABC):
     @property
@@ -9,25 +9,18 @@ class BasePlateProvider(ABC):
         pass
 
     @abstractmethod
-    def fetch_plate_info(self, plate: str) -> Optional[Dict[str, Any]]:
+    def fetch_plate_info(self, plate: str) -> Tuple[str, Optional[Dict[str, Any]]]:
         """
         Fetches vehicle information for a plate from the provider.
-        Returns a dictionary with standardized keys or None if not found/error.
+        Returns a tuple: (status_code, vehicle_dict)
 
-        Expected fields in returned dict:
-        - make (str)
-        - model (str)
-        - version (str)
-        - year_manufacture (int)
-        - year_model (int)
-        - engine (str)
-        - fuel (str)
-        - transmission (str)
-        - fipe_code (str)
-        - source_vehicle_id (str)
-        - data_quality (str)
-        - confidence (float)
-        - is_ambiguous (bool)
-        - raw_data (dict/json)
+        status_code options:
+        - SUCCESS
+        - VEHICLE_NOT_FOUND
+        - PROVIDER_NOT_CONFIGURED
+        - PROVIDER_AUTHENTICATION_ERROR
+        - PROVIDER_RATE_LIMIT
+        - PROVIDER_TIMEOUT
+        - PROVIDER_ERROR
         """
         pass

@@ -1,6 +1,6 @@
 import hashlib
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from app.providers.base_plate_provider import BasePlateProvider
 
 MOCK_VEHICLES_DATABASE = {
@@ -71,11 +71,11 @@ class MockPlateProvider(BasePlateProvider):
     def provider_name(self) -> str:
         return "MOCK_PROVIDER"
 
-    def fetch_plate_info(self, plate: str) -> Optional[Dict[str, Any]]:
+    def fetch_plate_info(self, plate: str) -> Tuple[str, Optional[Dict[str, Any]]]:
         clean_plate = plate.upper().replace("-", "").strip()
         data = MOCK_VEHICLES_DATABASE.get(clean_plate)
         if not data:
-            return None
+            return "VEHICLE_NOT_FOUND", None
 
         raw_json_str = json.dumps(data, sort_keys=True)
         raw_hash = hashlib.sha256(raw_json_str.encode('utf-8')).hexdigest()
@@ -83,4 +83,4 @@ class MockPlateProvider(BasePlateProvider):
         result = data.copy()
         result["raw_data"] = data
         result["raw_response_hash"] = raw_hash
-        return result
+        return "SUCCESS", result

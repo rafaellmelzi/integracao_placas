@@ -26,36 +26,40 @@ OLD_PLATE_REGEX = r'^[A-Z]{3}[0-9]{4}$'
 def validate_plate_format(plate: str) -> str:
     clean = plate.upper().replace("-", "").replace(" ", "").strip()
     if not (re.match(MERCOSUL_REGEX, clean) or re.match(OLD_PLATE_REGEX, clean)):
-        raise ValueError("Invalid Brazilian license plate format.")
+        raise ValueError("INVALID_PLATE")
     return clean
 
 class PlateLookupService:
     def __init__(self, db: Session):
         self.db = db
-        # Set up active provider chain according to configuration
         self.providers = []
         selected_provider = settings.VEHICLE_PROVIDER.upper().strip()
 
         if selected_provider == "MOCK":
             if settings.APP_ENV.lower() == "production":
-                logger.warning("VEHICLE_PROVIDER is set to MOCK in production mode. Real lookups will return DATA_SOURCE_NOT_CONFIGURED unless a real provider is set.")
+                logger.warning("VEHICLE_PROVIDER is set to MOCK in production environment.")
             else:
                 self.providers.append(MockPlateProvider())
         elif selected_provider == "APIPLACA":
-            self.providers.append(ApiPlacaProvider(api_key=settings.VEHICLE_API_KEY))
-        elif selected_provider == "PLACAFIPE":
-            self.providers.append(PlacaFipeProvider(api_key=settings.VEHICLE_API_KEY))
+            self.providers.append(ApiPlacaProvider(api_key=settings.VEHICLE_API_KEY, base_url=settings.VEHICLE_API_URL or "https://apiplaca.com.br/v1/consultar"))
         else:
-            # Fallback chain for real providers
-            self.providers.append(ApiPlacaProvider(api_key=settings.VEHICLE_API_KEY))
-            self.providers.append(PlacaFipeProvider(api_key=settings.VEHICLE_API_KEY))
+            # Fallback
+            self.providers.append(ApiPlacaProvider(api_key=settings.VEHICLE_API_KEY, base_url=settings.VEHICLE_API_URL or "https://apiplaca.com.br/v1/consultar"))
             if settings.APP_ENV.lower() != "production":
                 self.providers.append(MockPlateProvider())
 
     def get_or_fetch_plate(self, plate: str) -> Dict[str, Any]:
-        clean_plate = validate_plate_format(plate)
+        try:
+            clean_plate = validate_plate_format(plate)
+        except ValueError:
+            return {
+                "plate": plate,
+                "status": "INVALID_PLATE",
+                "message": "Formato de placa inválido. Utilize o padrão antigo (ABC1234) ou Mercosul (ABC1D23).",
+                "vehicle": None
+            }
 
-        # 1. Check local cache
+        # 1. Check local PostgreSQL/SQLite cache
         cache = self.db.query(VehiclePlateCache).filter(VehiclePlateCache.plate == clean_plate).first()
         if cache and cache.expires_at > datetime.utcnow():
             vehicle_data = None
@@ -82,30 +86,35 @@ class PlateLookupService:
                 }
             }
 
-        # In production mode with MOCK provider or no active real key -> DATA_SOURCE_NOT_CONFIGURED
+        # Production check for mock/unconfigured settings
         if settings.APP_ENV.lower() == "production" and (settings.VEHICLE_PROVIDER.upper() == "MOCK" or not settings.VEHICLE_API_KEY):
             return {
                 "plate": clean_plate,
-                "status": "DATA_SOURCE_NOT_CONFIGURED",
-                "message": "External vehicle provider not configured for production environment.",
+                "status": "PROVIDER_NOT_CONFIGURED",
+                "message": "Nenhum provedor oficial de consulta por placa está configurado em ambiente de produção.",
                 "vehicle": None
             }
 
         # 2. Query external provider chain
         raw_info = None
         used_provider = None
+        last_provider_status = "PROVIDER_NOT_CONFIGURED"
+
         for provider in self.providers:
-            info = provider.fetch_plate_info(clean_plate)
-            if info:
+            status_code, info = provider.fetch_plate_info(clean_plate)
+            if status_code == "SUCCESS" and info:
                 raw_info = info
                 used_provider = provider.provider_name
+                last_provider_status = "SUCCESS"
                 break
+            else:
+                last_provider_status = status_code
 
-        if not raw_info:
+        if not raw_info or last_provider_status != "SUCCESS":
             return {
                 "plate": clean_plate,
-                "status": "DATA_SOURCE_NOT_CONFIGURED" if not self.providers else "VEHICLE_NOT_FOUND",
-                "message": "Vehicle not found by configured provider.",
+                "status": last_provider_status,
+                "message": f"Erro na consulta do provedor: {last_provider_status}",
                 "vehicle": None
             }
 
@@ -164,9 +173,12 @@ class PlateLookupService:
         }
 
     def _get_or_create_vehicle(self, info: Dict[str, Any]) -> Tuple[Optional[Vehicle], bool, List[int]]:
-        make_name = normalize_make(info.get("make", ""))
-        model_name = normalize_model(info.get("model", ""))
-        engine_desc = normalize_engine(info.get("engine", ""))
+        make_name = normalize_make(info.get("make"))
+        model_name = normalize_model(info.get("model"))
+        engine_desc = normalize_engine(info.get("engine"))
+
+        if not make_name or not model_name:
+            return None, False, []
 
         make = self.db.query(VehicleMake).filter(VehicleMake.name == make_name).first()
         if not make:
@@ -200,27 +212,30 @@ class PlateLookupService:
                 self.db.add(engine)
                 self.db.flush()
 
-        fuel_str = info.get("fuel", "Flex").strip() if info.get("fuel") else "Flex"
-        fuel = self.db.query(VehicleFuel).filter(VehicleFuel.name == fuel_str).first()
-        if not fuel:
-            fuel = VehicleFuel(name=fuel_str)
-            self.db.add(fuel)
-            self.db.flush()
+        fuel_str = info.get("fuel").strip() if info.get("fuel") else None
+        fuel = None
+        if fuel_str:
+            fuel = self.db.query(VehicleFuel).filter(VehicleFuel.name == fuel_str).first()
+            if not fuel:
+                fuel = VehicleFuel(name=fuel_str)
+                self.db.add(fuel)
+                self.db.flush()
 
-        trans_str = info.get("transmission", "Manual 5v").strip() if info.get("transmission") else "Manual 5v"
-        transmission = self.db.query(VehicleTransmission).filter(VehicleTransmission.type == trans_str).first()
-        if not transmission:
-            transmission = VehicleTransmission(type=trans_str)
-            self.db.add(transmission)
-            self.db.flush()
+        trans_str = info.get("transmission").strip() if info.get("transmission") else None
+        transmission = None
+        if trans_str:
+            transmission = self.db.query(VehicleTransmission).filter(VehicleTransmission.type == trans_str).first()
+            if not transmission:
+                transmission = VehicleTransmission(type=trans_str)
+                self.db.add(transmission)
+                self.db.flush()
 
-        year_mfg = int(info.get("year_manufacture", 2020))
-        year_mod = int(info.get("year_model", 2021))
+        year_mfg = int(info.get("year_manufacture")) if info.get("year_manufacture") else 2020
+        year_mod = int(info.get("year_model")) if info.get("year_model") else 2021
         fipe = info.get("fipe_code")
 
         is_ambiguous = bool(info.get("is_ambiguous", False))
 
-        # Filter vehicle by make, model, year, version and engine
         vehicle_filter = [
             Vehicle.make_id == make.id,
             Vehicle.model_id == model.id,

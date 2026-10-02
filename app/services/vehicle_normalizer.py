@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from typing import Tuple, Dict
+from typing import Optional, Dict
 
 MAKE_ALIASES: Dict[str, str] = {
     "VW": "Volkswagen",
@@ -36,22 +36,31 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     return text
 
-def normalize_make(make_raw: str) -> str:
+def normalize_make(make_raw: Optional[str]) -> Optional[str]:
+    if not make_raw:
+        return None
     clean = normalize_text(make_raw)
+    if not clean:
+        return None
     return MAKE_ALIASES.get(clean, make_raw.strip().title())
 
-def normalize_model(model_raw: str) -> str:
+def normalize_model(model_raw: Optional[str]) -> Optional[str]:
+    if not model_raw:
+        return None
     clean = normalize_text(model_raw)
-    # Strip brand prefixes if present
+    if not clean:
+        return None
     for brand, canonical in MAKE_ALIASES.items():
         if clean.startswith(brand + " "):
             clean = clean[len(brand) + 1:].strip()
     return clean.title()
 
-def normalize_engine(engine_raw: str) -> str:
-    if not engine_raw:
-        return "1.0"
+def normalize_engine(engine_raw: Optional[str]) -> Optional[str]:
+    if not engine_raw or not engine_raw.strip():
+        return None
     clean = normalize_text(engine_raw)
+    if not clean:
+        return None
     if "1.0" in clean:
         if "TSI" in clean or "TURBO" in clean:
             return "1.0 TSI"

@@ -73,9 +73,10 @@ def test_lookup_old_plate():
 
 def test_lookup_invalid_plate():
     response = client.get("/api/v1/vehicles/plate/INVALID123")
-    assert response.status_code == 400
+    assert response.status_code == 200
     data = response.json()
-    assert "Invalid Brazilian license plate" in data["detail"]
+    assert data["status"] == "INVALID_PLATE"
+    assert "Formato de placa inválido" in data["message"]
 
 def test_lookup_ambiguous_vehicle():
     response = client.get("/api/v1/vehicles/plate/AMB1G88")
@@ -88,7 +89,7 @@ def test_lookup_not_found_plate():
     response = client.get("/api/v1/vehicles/plate/ZZZ9999")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "VEHICLE_NOT_FOUND" or data["status"] == "DATA_SOURCE_NOT_CONFIGURED"
+    assert data["status"] == "VEHICLE_NOT_FOUND" or data["status"] == "PROVIDER_NOT_CONFIGURED"
 
 # 3. Production Mode unconfigured behavior
 def test_production_mode_unconfigured_provider():
@@ -102,7 +103,7 @@ def test_production_mode_unconfigured_provider():
         response = client.get("/api/v1/vehicles/plate/RRR8888")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "DATA_SOURCE_NOT_CONFIGURED"
+        assert data["status"] == "PROVIDER_NOT_CONFIGURED"
     finally:
         settings.APP_ENV = orig_env
         settings.VEHICLE_PROVIDER = orig_provider
