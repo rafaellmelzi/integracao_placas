@@ -25,7 +25,7 @@ services:
       - "8000:8000"
     environment:
       - APP_ENV=development
-      - DATABASE_URL=postgresql://autoparts_user:autoparts_password@db:5432/autoparts_db
+      - DATABASE_URL=postgresql+psycopg://autoparts_user:autoparts_password@db:5432/autoparts_db
       - VEHICLE_PROVIDER=MOCK
       - VEHICLE_API_KEY=
       - PARTS_PROVIDER=LOCAL_DB
