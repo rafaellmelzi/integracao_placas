@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     PARTS_API_URL: str = os.getenv("PARTS_API_URL", "")
     PARTS_API_KEY: str = os.getenv("PARTS_API_KEY", "")
 
+    # FIPE Vehicle Synchronization & Provider Options
+    # Options: TABELAFIPE, PARALLELUM
+    FIPE_PROVIDER: str = os.getenv("FIPE_PROVIDER", "TABELAFIPE")
+    FIPE_SYNC_ENABLED: bool = os.getenv("FIPE_SYNC_ENABLED", "true").lower() in ("true", "1", "yes")
+    FIPE_CACHE_ENABLED: bool = os.getenv("FIPE_CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
+    FIPE_SYNC_DELAY: float = float(os.getenv("FIPE_SYNC_DELAY", "1.0"))
+    FIPE_AUTO_UPDATE: bool = os.getenv("FIPE_AUTO_UPDATE", "true").lower() in ("true", "1", "yes")
+
     class Config:
         case_sensitive = True
 

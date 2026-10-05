@@ -57,20 +57,32 @@ def health_check(db: Session = Depends(get_db)):
         }
     }
 
-# --- Vehicle Database Sync Endpoints ---
+# --- FIPE & Vehicle Database Sync Endpoints ---
+
+@router.get("/fipe/reference")
+def get_fipe_reference():
+    """
+    Get current FIPE reference period from active provider.
+    """
+    from app.providers.tabelafipe_provider import TabelaFipeProvider
+    provider = TabelaFipeProvider(delay_sec=0.1)
+    ref = provider.get_reference_period()
+    return ref or {"periodo": "Indisponível", "label": "Não foi possível obter mês de referência"}
 
 @router.get("/vehicles/sync/status")
 def get_vehicle_sync_status(db: Session = Depends(get_db)):
     """
     Get statistics and last sync log status for vehicle database.
     """
-    last_log = db.query(SyncLog).filter(SyncLog.source_name == "FIPE_PUBLIC_SOURCE").order_by(SyncLog.id.desc()).first()
+    last_log = db.query(SyncLog).filter(SyncLog.source_name.in_(["TABELAFIPE_PUBLIC_SOURCE", "FIPE_PUBLIC_SOURCE"])).order_by(SyncLog.id.desc()).first()
     return {
+        "fipe_provider": settings.FIPE_PROVIDER,
         "makes_count": db.query(VehicleMake).count(),
         "models_count": db.query(VehicleModel).count(),
         "versions_count": db.query(VehicleVersion).count(),
         "vehicles_count": db.query(Vehicle).count(),
         "last_sync": {
+            "source_name": last_log.source_name if last_log else "N/A",
             "status": last_log.status if last_log else "NEVER_RUN",
             "processed": last_log.records_processed if last_log else 0,
             "success": last_log.records_success if last_log else 0,
@@ -81,13 +93,12 @@ def get_vehicle_sync_status(db: Session = Depends(get_db)):
     }
 
 @router.post("/vehicles/sync")
-
 def trigger_vehicle_sync(limit_makes: Optional[int] = Query(None, description="Optional limit of makes for testing"), db: Session = Depends(get_db)):
     """
-    Trigger manual vehicle database synchronization with Parallelum FIPE public API.
+    Trigger manual vehicle database synchronization with TabelaFIPE.info public API.
     """
     from app.scripts.sync_vehicle_database import VehicleDatabaseSyncer
-    syncer = VehicleDatabaseSyncer(db=db, delay_sec=0.05, limit_makes=limit_makes)
+    syncer = VehicleDatabaseSyncer(db=db, delay_sec=settings.FIPE_SYNC_DELAY, limit_makes=limit_makes)
     syncer.run()
     return {
         "status": "SUCCESS",

@@ -110,6 +110,7 @@ class Vehicle(Base):
     year_manufacture: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     year_model: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     fipe_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    fipe_reference: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     make: Mapped["VehicleMake"] = relationship()
     model: Mapped["VehicleModel"] = relationship(back_populates="vehicles")
