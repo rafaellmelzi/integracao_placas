@@ -5,6 +5,7 @@ import random
 import argparse
 import urllib.request
 import urllib.error
+import email.utils
 import json
 import logging
 from datetime import datetime, timezone
@@ -33,13 +34,41 @@ class SyncStats:
 
 stats = SyncStats()
 
+def parse_retry_after(header_val: Optional[str]) -> Optional[float]:
+    """
+    Parse Retry-After header as integer seconds or HTTP-date.
+    Returns float seconds if valid, or None if invalid/negative.
+    """
+    if not header_val or not header_val.strip():
+        return None
+
+    val_str = header_val.strip()
+    if val_str.isdigit():
+        sec = float(val_str)
+        return sec if sec >= 0 else None
+
+    # Try parsing as HTTP-date
+    try:
+        dt = email.utils.parsedate_to_datetime(val_str)
+        if dt:
+            now = datetime.now(timezone.utc)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            delta = (dt - now).total_seconds()
+            return delta if delta > 0 else 0.0
+    except Exception:
+        pass
+
+    return None
+
 def fetch_json(url: str, max_retries: int = 10) -> Optional[Any]:
     """
     Polite and resilient HTTP fetcher for public APIs.
     Specifically handles HTTP 429 Too Many Requests using Retry-After headers or exponential backoff with jitter.
+    Strictly caps any wait time to MAX 60 seconds (min(calculated, 60.0)).
     Differentiates between valid empty responses, HTTP 429, permanent HTTP errors, and transient network timeouts.
     """
-    backoff_schedule = [5, 10, 20, 40, 60]
+    backoff_schedule = [5.0, 10.0, 20.0, 40.0, 60.0]
 
     for attempt in range(max_retries):
         req = urllib.request.Request(url, headers=HTTP_HEADERS)
@@ -52,13 +81,23 @@ def fetch_json(url: str, max_retries: int = 10) -> Optional[Any]:
             if e.code == 429:
                 stats.http_429_count += 1
                 retry_after_hdr = e.headers.get("Retry-After")
-                if retry_after_hdr and retry_after_hdr.isdigit():
-                    wait_time = int(retry_after_hdr) + random.uniform(0.5, 1.5)
+                parsed_sec = parse_retry_after(retry_after_hdr)
+
+                if parsed_sec is not None and parsed_sec > 0:
+                    base_wait = parsed_sec
                 else:
                     idx = min(attempt, len(backoff_schedule) - 1)
-                    wait_time = backoff_schedule[idx] + random.uniform(0.5, 2.0)
+                    base_wait = backoff_schedule[idx]
 
-                logger.warning(f"HTTP 429 Rate Limit hit for {url}. Waiting {wait_time:.1f}s before retry (attempt {attempt+1}/{max_retries})...")
+                # Cap base wait to 60.0 max BEFORE or AFTER jitter
+                base_wait_capped = min(base_wait, 60.0)
+                jitter = random.uniform(0.5, 1.5)
+                wait_time = min(base_wait_capped + jitter, 60.0)
+
+                logger.warning(
+                    f"HTTP 429 Rate Limit hit for {url}. Original Retry-After: '{retry_after_hdr}', "
+                    f"Chosen Wait Time: {wait_time:.1f}s (Attempt {attempt+1}/{max_retries})..."
+                )
                 time.sleep(wait_time)
                 continue
             elif e.code in (400, 404):

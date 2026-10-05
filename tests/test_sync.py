@@ -2,6 +2,7 @@ import os
 import json
 import pytest
 import urllib.error
+from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -10,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.models import Base, VehicleMake, VehicleModel, Vehicle, SyncLog
 from app.seeds import seed_data
 from app.scripts.sync_vehicle_database import (
-    VehicleDatabaseSyncer, fetch_json, CheckpointManager, stats
+    VehicleDatabaseSyncer, fetch_json, CheckpointManager, parse_retry_after, stats
 )
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -34,9 +35,9 @@ def db_session():
         session.close()
         Base.metadata.drop_all(bind=engine)
 
-def test_fetch_json_http_429_retry_after():
-    """Test that fetch_json handles HTTP 429 with Retry-After header without throwing or dropping request."""
-    mock_headers = {"Retry-After": "1"}
+def test_fetch_json_retry_after_capped_at_60s():
+    """Verify that an extreme Retry-After header (e.g. 83205s) is strictly capped at 60s max wait time."""
+    mock_headers = {"Retry-After": "83205"}
     err_429 = urllib.error.HTTPError(
         url="http://test", code=429, msg="Too Many Requests", hdrs=mock_headers, fp=None
     )
@@ -52,7 +53,52 @@ def test_fetch_json_http_429_retry_after():
         result = fetch_json("http://test", max_retries=3)
         assert result == [{"codigo": "1", "nome": "Acura"}]
         assert mock_urlopen.call_count == 2
-        mock_sleep.assert_called()
+        assert mock_sleep.call_count == 1
+
+        waited_seconds = mock_sleep.call_args[0][0]
+        assert waited_seconds <= 60.0
+        assert waited_seconds >= 50.0
+
+def test_fetch_json_retry_after_http_date():
+    """Verify parsing of HTTP-date string in Retry-After header."""
+    future_date = datetime.now(timezone.utc) + timedelta(seconds=120)
+    http_date_str = future_date.strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+    parsed_sec = parse_retry_after(http_date_str)
+    assert parsed_sec is not None
+    assert 110.0 <= parsed_sec <= 130.0
+
+    mock_headers = {"Retry-After": http_date_str}
+    err_429 = urllib.error.HTTPError(
+        url="http://test", code=429, msg="Too Many Requests", hdrs=mock_headers, fp=None
+    )
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = b'[]'
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen") as mock_urlopen, patch("time.sleep") as mock_sleep:
+        mock_urlopen.side_effect = [err_429, mock_resp]
+        fetch_json("http://test", max_retries=2)
+        waited_seconds = mock_sleep.call_args[0][0]
+        assert waited_seconds <= 60.0
+
+def test_fetch_json_jitter_cap_enforcement():
+    """Verify jitter addition never causes wait_time to exceed 60.0 seconds."""
+    mock_headers = {"Retry-After": "1000"}
+    err_429 = urllib.error.HTTPError(
+        url="http://test", code=429, msg="Too Many Requests", hdrs=mock_headers, fp=None
+    )
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = b'{}'
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen") as mock_urlopen, patch("time.sleep") as mock_sleep:
+        mock_urlopen.side_effect = [err_429, mock_resp]
+        fetch_json("http://test", max_retries=2)
+        waited_seconds = mock_sleep.call_args[0][0]
+        assert waited_seconds <= 60.0
 
 def test_fetch_json_http_429_exponential_backoff():
     """Test exponential backoff when Retry-After header is missing."""
