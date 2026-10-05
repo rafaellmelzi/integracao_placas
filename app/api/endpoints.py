@@ -14,8 +14,10 @@ from app.services.parts_search_service import PartsSearchService
 from app.importers.catalog_importer import CatalogImporter
 from app.db.models import (
     ERPProductMapping, ERPProductMappingType, ConfidenceLevel, Part,
-    VehicleMake, VehicleModel, VehicleVersion, VehicleEngine, Vehicle
+    VehicleMake, VehicleModel, VehicleVersion, VehicleEngine, Vehicle,
+    SyncLog
 )
+import asyncio
 
 router = APIRouter()
 
@@ -34,6 +36,11 @@ def health_check(db: Session = Depends(get_db)):
     catalog_parts_count = db.query(Part).count()
     catalog_status = "configured" if catalog_parts_count > 0 else "not_configured"
 
+    makes_count = db.query(VehicleMake).count()
+    models_count = db.query(VehicleModel).count()
+    versions_count = db.query(VehicleVersion).count()
+    vehicles_count = db.query(Vehicle).count()
+
     return {
         "status": "healthy" if db_status == "connected" else "unhealthy",
         "app_env": settings.APP_ENV,
@@ -41,7 +48,53 @@ def health_check(db: Session = Depends(get_db)):
         "plate_provider": settings.VEHICLE_PROVIDER,
         "plate_provider_available": plate_provider_status == "configured",
         "catalog_status": catalog_status,
-        "catalog_parts_count": catalog_parts_count
+        "catalog_parts_count": catalog_parts_count,
+        "vehicle_stats": {
+            "makes": makes_count,
+            "models": models_count,
+            "versions": versions_count,
+            "vehicles": vehicles_count
+        }
+    }
+
+# --- Vehicle Database Sync Endpoints ---
+
+@router.get("/vehicles/sync/status")
+def get_vehicle_sync_status(db: Session = Depends(get_db)):
+    """
+    Get statistics and last sync log status for vehicle database.
+    """
+    last_log = db.query(SyncLog).filter(SyncLog.source_name == "FIPE_PUBLIC_SOURCE").order_by(SyncLog.id.desc()).first()
+    return {
+        "makes_count": db.query(VehicleMake).count(),
+        "models_count": db.query(VehicleModel).count(),
+        "versions_count": db.query(VehicleVersion).count(),
+        "vehicles_count": db.query(Vehicle).count(),
+        "last_sync": {
+            "status": last_log.status if last_log else "NEVER_RUN",
+            "processed": last_log.records_processed if last_log else 0,
+            "success": last_log.records_success if last_log else 0,
+            "failed": last_log.records_failed if last_log else 0,
+            "details": last_log.details if last_log else None,
+            "created_at": last_log.created_at.isoformat() if last_log else None
+        } if last_log else None
+    }
+
+@router.post("/vehicles/sync")
+
+def trigger_vehicle_sync(limit_makes: Optional[int] = Query(None, description="Optional limit of makes for testing"), db: Session = Depends(get_db)):
+    """
+    Trigger manual vehicle database synchronization with Parallelum FIPE public API.
+    """
+    from app.scripts.sync_vehicle_database import VehicleDatabaseSyncer
+    syncer = VehicleDatabaseSyncer(db=db, delay_sec=0.05, limit_makes=limit_makes)
+    syncer.run()
+    return {
+        "status": "SUCCESS",
+        "processed": syncer.processed,
+        "inserted": syncer.inserted,
+        "updated": syncer.updated,
+        "errors": syncer.errors
     }
 
 # --- Cascading Vehicle Dropdown Endpoints ---

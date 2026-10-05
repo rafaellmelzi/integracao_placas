@@ -1,44 +1,39 @@
-# Fontes Gratuitas de Dados Veiculares (VEHICLE_DATA_SOURCES.md)
+# Fontes de Dados de Veículos (Vehicle Data Sources)
+
+Este documento detalha as fontes de dados para identificação e catálogo de veículos utilizadas no projeto **AutoParts API**.
 
 ---
 
-## Visão Geral
+## 1. Fonte Pública Gratuita: Parallelum FIPE API
 
-Este documento descreve as fontes públicas e gratuitas de dados veiculares no Brasil para formação de base própria (Marca, Modelo, Ano, Versão e Motorização), visando custo zero no MVP.
+* **Nome:** Parallelum FIPE REST API (com base nos dados oficiais da Fundação Instituto de Pesquisas Econômicas - FIPE)
+* **URL Oficial:** [https://parallelum.com.br/fipe/api/v1](https://parallelum.com.br/fipe/api/v1)
+* **Documentação:** [https://deividfortuna.github.io/fipe/](https://deividfortuna.github.io/fipe/)
+* **Custo:** R$ 0,00 (100% Gratuito)
+* **Status de Autenticação:** Pública (Sem necessidade de API Key ou Token)
+* **Data da Validação:** 2025-10-02
+* **Licença / Termos de Uso:** `USAGE_TERMS_NOT_VERIFIED` (Serviço público comunitário mantido por Deivid Fortuna; os dados FIPE de preços e nomes são de domínio público comercial no Brasil, porém a licença específica do servidor de API pública não é explicitamente declarada).
 
----
+### Endpoints Utilizados:
+1. `GET /carros/marcas` - Retorna a lista completa de marcas brasileiras (ex: VW, Chevrolet, Fiat, Toyota).
+2. `GET /carros/marcas/{marca_id}/modelos` - Retorna todos os modelos associados a uma marca.
+3. `GET /carros/marcas/{marca_id}/modelos/{modelo_id}/anos` - Retorna as combinações de ano/combustível atreladas ao modelo.
+4. `GET /carros/marcas/{marca_id}/modelos/{modelo_id}/anos/{ano_id}` - Retorna o detalhamento técnico do veículo, contendo Ano Modelo, Combustível e Código FIPE.
 
-## 1. Tabela FIPE (Fundação Instituto de Pesquisas Econômicas)
+### Dados Efetivamente Fornecidos:
+- Marca (`Marca`)
+- Modelo / Versão original (`Modelo`)
+- Ano Modelo (`AnoModelo`)
+- Combustível (`Combustivel`)
+- Código FIPE (`CodigoFipe`)
+- Valor de Referência FIPE (`Valor`)
+- Mês de Referência (`MesReferencia`)
 
-- **Site Oficial:** `https://veiculos.fipe.org.br/`
-- **Status:** **GRATUITO / USO PÚBLICO**
-- **Acesso:** Serviços comunitários REST / Tabela FIPE aberta.
-- **Campos Fornecidos:**
-  - Marca (`brand`)
-  - Modelo (`model`)
-  - Ano Modelo (`year_model`)
-  - Código FIPE (`fipe_code`)
-  - Combustível (`fuel`)
-- **Uso:** Utilizado no sistema para estruturar o cadastro base de marcas, modelos e anos.
+### Dados NÃO Fornecidos (gravados como `NULL`):
+- Motorização explícita (cilindrada em litros, potência hp, número de válvulas separado)
+- Tipo de Transmissão (Câmbio manual/automático)
+- Tipo de Carroceria (Sedan, Hatch, SUV)
+- Número de portas / Lugares
 
----
-
-## 2. Dados Abertos Denatran / Senatran (Frota Circulante)
-
-- **Site Oficial:** `https://www.gov.br/transportes/pt-br/assuntos/transito/conteudo-Senatran/frota-de-veiculos-2024`
-- **Status:** **GRATUITO / DADOS ABERTOS GOVERNAMENTAIS**
-- **Licença:** Licença Aberta para Informações Públicas (Lei de Acesso à Informação nº 12.527/2011).
-- **Campos Fornecidos:**
-  - Marca/Modelo oficial
-  - Ano de Fabricação
-  - UF/Município de licenciamento
-- **Uso:** Formação do dicionário oficial de nomenclaturas de marcas e modelos para normalização.
-
----
-
-## 3. Base Interna de Demonstração (DEMO SEED)
-
-- **Status:** **GRATUITO / EMBUTIDO NO PROJETO**
-- **Origem:** Script `app/seeds/seed_data.py`.
-- **Identificador de Origem:** `DEMO_CATALOG`
-- **Finalidade:** Demonstração completa de consultas por Marca, Modelo, Versão e Motorização sem necessidade de conexões pagas.
+> **IMPORTANTE (REGRA DE INTEGRIDADE DE DADOS):**
+> Em estrita conformidade com os requisitos do sistema, a API **jamais inferirá ou inventará** dados técnicos (como motorização ou câmbio) a partir do texto do modelo. Se o campo não vier explicitamente preenchido pela fonte, será gravado como `NULL` no PostgreSQL.

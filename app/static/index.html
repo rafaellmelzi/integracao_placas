@@ -51,6 +51,9 @@
                     <a href="#" class="nav-link active" onclick="switchTab('partsSearchTab')"><i class="bi bi-search me-2"></i>Consulta de Peças</a>
                 </li>
                 <li class="nav-item">
+                    <a href="#" class="nav-link" onclick="switchTab('vehicleBaseTab')"><i class="bi bi-database me-2"></i>Base de Veículos</a>
+                </li>
+                <li class="nav-item">
                     <a href="#" class="nav-link" onclick="switchTab('plateTab')"><i class="bi bi-card-heading me-2"></i>Consulta por Placa</a>
                 </li>
                 <li class="nav-item">
@@ -165,6 +168,55 @@
                 </div>
             </div>
 
+            <!-- Base de Veículos Tab -->
+            <div id="vehicleBaseTab" class="tab-content" style="display:none;">
+                <h3 class="fw-bold mb-4">Base de Veículos (Sincronização FIPE Gratuita)</h3>
+
+                <div class="row g-3 mb-4">
+                    <div class="col-md-3">
+                        <div class="card p-3 text-center bg-white">
+                            <h6 class="text-muted fw-bold">MARCAS</h6>
+                            <h2 id="cntMakes" class="fw-bold text-primary m-0">0</h2>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card p-3 text-center bg-white">
+                            <h6 class="text-muted fw-bold">MODELOS</h6>
+                            <h2 id="cntModels" class="fw-bold text-success m-0">0</h2>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card p-3 text-center bg-white">
+                            <h6 class="text-muted fw-bold">VERSÕES</h6>
+                            <h2 id="cntVersions" class="fw-bold text-warning m-0">0</h2>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card p-3 text-center bg-white">
+                            <h6 class="text-muted fw-bold">VEÍCULOS TOTAL</h6>
+                            <h2 id="cntVehicles" class="fw-bold text-info m-0">0</h2>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-4 mb-4">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-arrow-repeat me-2"></i>Sincronização Manual</h5>
+                    <p class="text-muted">A sincronização percorre todas as marcas, modelos e anos disponíveis na base FIPE pública da Parallelum, gravando os registros no PostgreSQL sem sobrecarregar a API.</p>
+
+                    <div class="d-flex align-items-center gap-3">
+                        <button id="btnSyncVehicles" class="btn btn-primary btn-lg fw-bold" onclick="startVehicleSync()">
+                            <i class="bi bi-cloud-download me-2"></i>SINCRONIZAR BASE DE VEÍCULOS
+                        </button>
+                        <span id="syncStatusText" class="fw-bold text-secondary"></span>
+                    </div>
+
+                    <div id="syncReportContainer" class="mt-4" style="display:none;">
+                        <h6 class="fw-bold">Último Log de Sincronização:</h6>
+                        <pre id="syncReportJson" class="bg-dark text-light p-3 rounded"></pre>
+                    </div>
+                </div>
+            </div>
+
             <!-- 2. Direct Plate Lookup Tab -->
             <div id="plateTab" class="tab-content" style="display:none;">
                 <h3 class="fw-bold mb-4">Consulta Direta por Placa</h3>
@@ -236,7 +288,46 @@
     document.addEventListener("DOMContentLoaded", () => {
         loadHealthStatus();
         loadVehicleMakes();
+        loadVehicleSyncStatus();
     });
+
+    async function loadVehicleSyncStatus() {
+        try {
+            const res = await fetch('/api/v1/vehicles/sync/status');
+            const data = await res.json();
+            document.getElementById('cntMakes').innerText = data.makes_count || 0;
+            document.getElementById('cntModels').innerText = data.models_count || 0;
+            document.getElementById('cntVersions').innerText = data.versions_count || 0;
+            document.getElementById('cntVehicles').innerText = data.vehicles_count || 0;
+
+            if (data.last_sync) {
+                document.getElementById('syncReportContainer').style.display = 'block';
+                document.getElementById('syncReportJson').innerText = JSON.stringify(data.last_sync, null, 2);
+            }
+        } catch (e) {
+            console.error('Error fetching sync status', e);
+        }
+    }
+
+    async function startVehicleSync() {
+        const btn = document.getElementById('btnSyncVehicles');
+        const stText = document.getElementById('syncStatusText');
+        btn.disabled = true;
+        stText.innerText = 'Sincronizando veículos... Por favor, aguarde.';
+
+        try {
+            const res = await fetch('/api/v1/vehicles/sync?limit_makes=2', { method: 'POST' });
+            const data = await res.json();
+            stText.innerText = `Sincronização concluída! Inseridos: ${data.inserted}, Atualizados: ${data.updated}.`;
+            loadVehicleSyncStatus();
+            loadVehicleMakes();
+        } catch (e) {
+            alert('Erro ao sincronizar: ' + e);
+            stText.innerText = 'Erro na sincronização.';
+        } finally {
+            btn.disabled = false;
+        }
+    }
 
     async function loadHealthStatus() {
         try {
