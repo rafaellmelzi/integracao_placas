@@ -266,3 +266,12 @@ class SyncLog(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+class FipeCacheTracking(Base):
+    __tablename__ = "fipe_cache_tracking"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cache_key: Mapped[str] = mapped_column(String(150), unique=True, nullable=False, index=True) # e.g. MAKES, MODELS:2, YEARS:101, VERSIONS:101:2023
+    fipe_reference: Mapped[str] = mapped_column(String(50), nullable=False, index=True) # e.g. outubro/2026 or 338
+    last_synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="VALID", nullable=False)

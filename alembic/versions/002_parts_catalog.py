@@ -24,9 +24,6 @@ def upgrade() -> None:
     # 2. Add column to part_application table
     op.add_column('part_application', sa.Column('axis', sa.String(length=50), nullable=True))
 
-    # 3. Create missing tables if they don't exist
-    bind = op.get_bind()
-    Base.metadata.create_all(bind=bind)
 
 def downgrade() -> None:
     op.drop_column('part_application', 'axis')

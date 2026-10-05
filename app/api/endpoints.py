@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text, distinct
@@ -11,13 +11,13 @@ from app.schemas.schemas import (
 )
 from app.services.plate_lookup_service import PlateLookupService
 from app.services.parts_search_service import PartsSearchService
+from app.services.fipe_service import FipeService
 from app.importers.catalog_importer import CatalogImporter
 from app.db.models import (
     ERPProductMapping, ERPProductMappingType, ConfidenceLevel, Part,
     VehicleMake, VehicleModel, VehicleVersion, VehicleEngine, Vehicle,
     SyncLog
 )
-import asyncio
 
 router = APIRouter()
 
@@ -92,69 +92,62 @@ def get_vehicle_sync_status(db: Session = Depends(get_db)):
         } if last_log else None
     }
 
-@router.post("/vehicles/sync")
-def trigger_vehicle_sync(limit_makes: Optional[int] = Query(None, description="Optional limit of makes for testing"), db: Session = Depends(get_db)):
-    """
-    Trigger manual vehicle database synchronization with TabelaFIPE.info public API.
-    """
+def run_background_sync(db: Session, limit_makes: Optional[int]):
     from app.scripts.sync_vehicle_database import VehicleDatabaseSyncer
     syncer = VehicleDatabaseSyncer(db=db, delay_sec=settings.FIPE_SYNC_DELAY, limit_makes=limit_makes)
     syncer.run()
+
+@router.post("/vehicles/sync", status_code=202)
+def trigger_vehicle_sync(
+    background_tasks: BackgroundTasks,
+    limit_makes: Optional[int] = Query(None, description="Optional limit of makes for testing"),
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger non-blocking background vehicle database synchronization with TabelaFIPE.info public API.
+    """
+    background_tasks.add_task(run_background_sync, db, limit_makes)
     return {
-        "status": "SUCCESS",
-        "processed": syncer.processed,
-        "inserted": syncer.inserted,
-        "updated": syncer.updated,
-        "errors": syncer.errors
+        "status": "SYNC_STARTED",
+        "message": "Sincronização iniciada em segundo plano. Acompanhe o progresso em GET /api/v1/vehicles/sync/status."
     }
 
-# --- Cascading Vehicle Dropdown Endpoints ---
+# --- Cascading Vehicle Dropdown Endpoints (On-Demand + PostgreSQL Cache) ---
 
 @router.get("/vehicles/makes")
 def get_vehicle_makes(db: Session = Depends(get_db)):
     """
-    Get list of all vehicle makes in database.
+    Get list of all vehicle makes on-demand from TabelaFIPE.info with PostgreSQL cache.
     """
-    makes = db.query(VehicleMake).order_by(VehicleMake.name).all()
+    service = FipeService(db=db)
+    makes = service.get_makes_ondemand()
     return [{"id": m.id, "name": m.name} for m in makes]
 
 @router.get("/vehicles/makes/{make_id}/models")
 def get_vehicle_models(make_id: int, db: Session = Depends(get_db)):
     """
-    Get list of models for a specific vehicle make.
+    Get list of models for a specific vehicle make on-demand.
     """
-    models = db.query(VehicleModel).filter(VehicleModel.make_id == make_id).order_by(VehicleModel.name).all()
+    service = FipeService(db=db)
+    models = service.get_models_ondemand(make_id)
     return [{"id": m.id, "name": m.name} for m in models]
 
 @router.get("/vehicles/models/{model_id}/years")
 def get_vehicle_years(model_id: int, db: Session = Depends(get_db)):
     """
-    Get list of available model years for a vehicle model.
+    Get list of available model years for a vehicle model on-demand.
     """
-    years_mfg = db.query(distinct(Vehicle.year_manufacture)).filter(Vehicle.model_id == model_id).all()
-    years_mod = db.query(distinct(Vehicle.year_model)).filter(Vehicle.model_id == model_id).all()
-
-    unique_years = sorted(list(set([y[0] for y in years_mfg if y[0]] + [y[0] for y in years_mod if y[0]])), reverse=True)
-    return [{"year": y} for y in unique_years]
+    service = FipeService(db=db)
+    years = service.get_years_ondemand(model_id)
+    return [{"year": y} for y in years]
 
 @router.get("/vehicles/models/{model_id}/years/{year}/versions")
 def get_vehicle_versions(model_id: int, year: int, db: Session = Depends(get_db)):
     """
-    Get versions for a specific vehicle model and year.
+    Get versions for a specific vehicle model and year on-demand.
     """
-    vehicles = db.query(Vehicle).filter(
-        Vehicle.model_id == model_id,
-        (Vehicle.year_manufacture == year) | (Vehicle.year_model == year)
-    ).all()
-
-    versions = []
-    seen = set()
-    for v in vehicles:
-        if v.version and v.version.id not in seen:
-            seen.add(v.version.id)
-            versions.append({"id": v.version.id, "name": v.version.name})
-
-    return versions
+    service = FipeService(db=db)
+    return service.get_versions_ondemand(model_id, year)
 
 @router.get("/vehicles/versions/{version_id}/engines")
 def get_vehicle_engines(version_id: int, db: Session = Depends(get_db)):

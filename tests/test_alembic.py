@@ -50,7 +50,7 @@ def test_clean_database_migrations():
         assert "oem_codes" not in part_cols_001
         assert "technical_specs" not in part_cols_001
 
-        # 2. Upgrade to 002_parts_catalog (head)
+        # 2. Upgrade to head
         command.upgrade(alembic_cfg, "head")
 
         # Verify 002 columns were properly added

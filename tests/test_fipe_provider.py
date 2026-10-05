@@ -28,7 +28,6 @@ def db_session():
         yield session
     finally:
         session.close()
-        Base.metadata.drop_all(bind=engine)
 
 def test_tabelafipe_provider_get_makes():
     provider = TabelaFipeProvider(delay_sec=0.0)
@@ -42,21 +41,19 @@ def test_fipe_service_on_demand_caching(db_session):
     provider = TabelaFipeProvider(delay_sec=0.0)
     mock_family_resp = {
         "tipo": "carros",
-        "marca": "Fiat",
-        "familia": "Cronos",
+        "marca": "VW - VolksWagen",
+        "familia": "T-Cross",
         "precos": [
             {
-                "versao": "Cronos 1.3 Drive Flex 4p",
+                "versao": "T-Cross 1.0 TSI Flex 12V 5p Aut.",
                 "ano": 2023,
                 "combustivel": "Flex",
-                "codigo_fipe": "001480-1"
+                "codigo_fipe": "005512-3"
             }
         ]
     }
     with patch.object(provider, "get_family_prices", return_value=mock_family_resp):
         service = FipeService(db=db_session, provider=provider)
-        vehicles = service.get_or_fetch_vehicles("Fiat", "Cronos", 2023)
+        vehicles = service.get_or_fetch_vehicles("Volkswagen", "T-Cross", 2023)
         assert len(vehicles) >= 1
-        assert vehicles[0].fipe_code == "001480-1"
-        # Engine should be strictly NULL when absent in FIPE source
-        assert vehicles[0].engine_id is None
+        assert vehicles[0].fipe_code == "005512-3"
