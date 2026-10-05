@@ -153,14 +153,48 @@ def get_vehicle_versions(model_id: int, year: int, db: Session = Depends(get_db)
 def get_vehicle_engines(version_id: int, db: Session = Depends(get_db)):
     """
     Get engines for a specific vehicle version.
+    If no engine is linked yet, parses the VehicleVersion name on-demand and creates/links the VehicleEngine.
     """
+    version = db.query(VehicleVersion).filter_by(id=version_id).first()
+    if not version:
+        return []
+
     vehicles = db.query(Vehicle).filter(Vehicle.version_id == version_id).all()
+
+    # On-demand parse if version is present but vehicles have no engine_id linked
+    has_linked_engine = any(v.engine_id is not None for v in vehicles)
+    if not has_linked_engine and version.name:
+        from app.services.vehicle_normalizer import parse_version_specs
+        from app.db.models import VehicleEngine
+        specs = parse_version_specs(version.name)
+        if specs["engine_desc"]:
+            db_engine = db.query(VehicleEngine).filter_by(description=specs["engine_desc"]).first()
+            if not db_engine:
+                db_engine = VehicleEngine(
+                    description=specs["engine_desc"],
+                    displacement=specs["displacement"],
+                    valves=specs["valves"],
+                    power_hp=None
+                )
+                db.add(db_engine)
+                db.flush()
+
+            for v in vehicles:
+                v.engine_id = db_engine.id
+            db.commit()
+            vehicles = db.query(Vehicle).filter(Vehicle.version_id == version_id).all()
+
     engines = []
     seen = set()
     for v in vehicles:
         if v.engine and v.engine.id not in seen:
             seen.add(v.engine.id)
-            engines.append({"id": v.engine.id, "description": v.engine.description, "displacement": v.engine.displacement})
+            engines.append({
+                "id": v.engine.id,
+                "description": v.engine.description,
+                "displacement": v.engine.displacement,
+                "valves": v.engine.valves
+            })
 
     return engines
 

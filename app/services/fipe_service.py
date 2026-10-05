@@ -4,11 +4,11 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.db.models import (
-    VehicleMake, VehicleModel, VehicleVersion, VehicleFuel, Vehicle,
+    VehicleMake, VehicleModel, VehicleVersion, VehicleEngine, VehicleTransmission, VehicleFuel, Vehicle,
     FipeCacheTracking, SyncLog
 )
 from app.providers.tabelafipe_provider import TabelaFipeProvider
-from app.services.vehicle_normalizer import normalize_make, normalize_model
+from app.services.vehicle_normalizer import normalize_make, normalize_model, parse_version_specs
 
 logger = logging.getLogger("fipe_service")
 
@@ -147,12 +147,39 @@ class FipeService:
                     if not item_year or item_year == 32000:
                         item_year = datetime.now(timezone.utc).year
 
+                    # Parse version description specs
+                    specs = parse_version_specs(ver_name)
+                    effective_fuel = specs["fuel"] or fuel_name
+
                     # Fuel
-                    db_fuel = self.db.query(VehicleFuel).filter_by(name=fuel_name).first()
+                    db_fuel = self.db.query(VehicleFuel).filter_by(name=effective_fuel).first()
                     if not db_fuel:
-                        db_fuel = VehicleFuel(name=fuel_name)
+                        db_fuel = VehicleFuel(name=effective_fuel)
                         self.db.add(db_fuel)
                         self.db.flush()
+
+                    # Engine
+                    db_engine = None
+                    if specs["engine_desc"]:
+                        db_engine = self.db.query(VehicleEngine).filter_by(description=specs["engine_desc"]).first()
+                        if not db_engine:
+                            db_engine = VehicleEngine(
+                                description=specs["engine_desc"],
+                                displacement=specs["displacement"],
+                                valves=specs["valves"],
+                                power_hp=None
+                            )
+                            self.db.add(db_engine)
+                            self.db.flush()
+
+                    # Transmission
+                    db_trans = None
+                    if specs["transmission"]:
+                        db_trans = self.db.query(VehicleTransmission).filter_by(type=specs["transmission"]).first()
+                        if not db_trans:
+                            db_trans = VehicleTransmission(type=specs["transmission"])
+                            self.db.add(db_trans)
+                            self.db.flush()
 
                     # Version
                     norm_ver = ver_name.strip().upper()
@@ -173,13 +200,19 @@ class FipeService:
                     if v_existing:
                         v_existing.fipe_code = fipe_code
                         v_existing.fipe_reference = current_ref
+                        if db_engine:
+                            v_existing.engine_id = db_engine.id
+                        if db_trans:
+                            v_existing.transmission_id = db_trans.id
+                        if db_fuel:
+                            v_existing.fuel_id = db_fuel.id
                     else:
                         v_new = Vehicle(
                             make_id=db_make.id,
                             model_id=db_model.id,
                             version_id=db_version.id,
-                            engine_id=None, # Explicitly NULL
-                            transmission_id=None,
+                            engine_id=db_engine.id if db_engine else None,
+                            transmission_id=db_trans.id if db_trans else None,
                             fuel_id=db_fuel.id,
                             year_manufacture=item_year,
                             year_model=item_year,
