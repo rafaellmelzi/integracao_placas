@@ -16,7 +16,7 @@ engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db() -> None:
-    Base.metadata.create_all(bind=engine)
+    pass
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()

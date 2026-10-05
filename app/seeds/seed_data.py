@@ -11,7 +11,6 @@ from app.db.models import (
 logger = logging.getLogger(__name__)
 
 def seed_database():
-    init_db()
     db = SessionLocal()
 
     try:
