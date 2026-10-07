@@ -75,10 +75,24 @@ class PlateLookupService:
             if cache.possible_vehicle_ids:
                 possible_vehicle_ids = [int(vid.strip()) for vid in cache.possible_vehicle_ids.split(",") if vid.strip()]
 
+            fipe_candidates = []
+            if cache.raw_response_json:
+                try:
+                    raw_dict = json.loads(cache.raw_response_json)
+                    fipe_candidates = raw_dict.get("fipe_candidates") or []
+                except Exception:
+                    pass
+
             return {
                 "plate": clean_plate,
                 "status": "VEHICLE_VARIANT_AMBIGUOUS" if cache.is_ambiguous else ("SUCCESS" if cache.vehicle else "VEHICLE_NOT_FOUND"),
                 "vehicle": vehicle_data,
+                "identification": {
+                    "status": "EXACT" if len(fipe_candidates) == 1 else ("PARTIAL" if fipe_candidates else "EXACT"),
+                    "exact_version": len(fipe_candidates) == 1,
+                    "candidate_count": len(fipe_candidates)
+                },
+                "fipe_candidates": fipe_candidates,
                 "is_ambiguous": cache.is_ambiguous,
                 "possible_vehicle_ids": possible_vehicle_ids,
                 "cache_info": {
@@ -125,47 +139,67 @@ class PlateLookupService:
             }
 
         # 3. Normalize & Persist Vehicle in DB
+        adapted_info = self._flatten_or_adapt_provider_payload(raw_info)
         vehicle_entity, is_ambiguous, possible_ids = self._get_or_create_vehicle(raw_info)
+
+        if not vehicle_entity:
+            logger.error(f"PlateLookupService: Failed to extract or persist valid vehicle entity for plate {clean_plate}.")
+            return {
+                "plate": clean_plate,
+                "status": "VEHICLE_NORMALIZATION_ERROR",
+                "message": "Não foi possível normalizar ou construir o veículo a partir dos dados do provedor.",
+                "vehicle": None
+            }
 
         # 4. Save/Update Cache
         expires_at = datetime.utcnow() + timedelta(days=settings.PLATE_CACHE_TTL_DAYS)
+        raw_hash = adapted_info.get("raw_response_hash", "hash_placeholder")
+        raw_json_str = json.dumps(raw_info)
+
         if not cache:
             cache = VehiclePlateCache(
                 plate=clean_plate,
-                vehicle_id=vehicle_entity.id if vehicle_entity else None,
+                vehicle_id=vehicle_entity.id,
                 is_ambiguous=is_ambiguous,
                 possible_vehicle_ids=",".join(map(str, possible_ids)) if possible_ids else None,
                 source=used_provider,
                 source_vehicle_id=str(raw_info.get("source_vehicle_id", "")),
                 consulted_at=datetime.utcnow(),
                 expires_at=expires_at,
-                data_quality=raw_info.get("data_quality", "HIGH"),
-                confidence=float(raw_info.get("confidence", 1.0)),
-                raw_response_hash=raw_info.get("raw_response_hash", "hash_placeholder"),
-                raw_response_json=json.dumps(raw_info.get("raw_data", {}))
+                data_quality=adapted_info.get("data_quality", "HIGH"),
+                confidence=float(adapted_info.get("confidence", 1.0)),
+                raw_response_hash=raw_hash,
+                raw_response_json=raw_json_str
             )
             self.db.add(cache)
         else:
-            cache.vehicle_id = vehicle_entity.id if vehicle_entity else None
+            cache.vehicle_id = vehicle_entity.id
             cache.is_ambiguous = is_ambiguous
             cache.possible_vehicle_ids = ",".join(map(str, possible_ids)) if possible_ids else None
             cache.source = used_provider
             cache.consulted_at = datetime.utcnow()
             cache.expires_at = expires_at
-            cache.data_quality = raw_info.get("data_quality", "HIGH")
-            cache.confidence = float(raw_info.get("confidence", 1.0))
-            cache.raw_response_hash = raw_info.get("raw_response_hash", "hash_placeholder")
-            cache.raw_response_json = json.dumps(raw_info.get("raw_data", {}))
+            cache.data_quality = adapted_info.get("data_quality", "HIGH")
+            cache.confidence = float(adapted_info.get("confidence", 1.0))
+            cache.raw_response_hash = raw_hash
+            cache.raw_response_json = raw_json_str
 
         self.db.commit()
         self.db.refresh(cache)
 
-        vehicle_data = self._format_vehicle_dict(vehicle_entity) if vehicle_entity else None
+        vehicle_data = self._format_vehicle_dict(vehicle_entity)
+        fipe_candidates = adapted_info.get("fipe_candidates") or []
 
         return {
             "plate": clean_plate,
             "status": "VEHICLE_VARIANT_AMBIGUOUS" if is_ambiguous else "SUCCESS",
             "vehicle": vehicle_data,
+            "identification": {
+                "status": "EXACT" if len(fipe_candidates) == 1 else ("PARTIAL" if fipe_candidates else "EXACT"),
+                "exact_version": len(fipe_candidates) == 1,
+                "candidate_count": len(fipe_candidates)
+            },
+            "fipe_candidates": fipe_candidates,
             "is_ambiguous": is_ambiguous,
             "possible_vehicle_ids": possible_ids,
             "cache_info": {
@@ -178,7 +212,51 @@ class PlateLookupService:
             }
         }
 
-    def _get_or_create_vehicle(self, info: Dict[str, Any]) -> Tuple[Optional[Vehicle], bool, List[int]]:
+    def _flatten_or_adapt_provider_payload(self, raw_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Adapts both flat provider payloads (MockPlateProvider, ApiPlacaProvider)
+        and nested provider payloads (FipePlacaProvider) into a unified internal dictionary.
+        """
+        if not raw_info:
+            return {}
+
+        # If payload contains a nested "vehicle" object (e.g. FipePlacaProvider)
+        v = raw_info.get("vehicle") if isinstance(raw_info.get("vehicle"), dict) else raw_info
+
+        make = v.get("make") or raw_info.get("make")
+        model = v.get("model") or raw_info.get("model")
+        year_mfg = v.get("manufacture_year") or v.get("year_manufacture") or raw_info.get("year_manufacture")
+        year_mod = v.get("model_year") or v.get("year_model") or raw_info.get("year_model")
+        engine = v.get("engine_displacement") or v.get("engine") or raw_info.get("engine")
+        fuel = v.get("fuel") or raw_info.get("fuel")
+        transmission = v.get("transmission") or raw_info.get("transmission")
+        fipe_code = v.get("fipe_code") or raw_info.get("fipe_code")
+
+        # Fallback FIPE code from candidates if single candidate
+        candidates = raw_info.get("fipe_candidates") or []
+        if not fipe_code and len(candidates) == 1:
+            fipe_code = candidates[0].get("fipe_code")
+
+        return {
+            "make": make,
+            "model": model,
+            "year_manufacture": year_mfg,
+            "year_model": year_mod,
+            "engine": engine,
+            "fuel": fuel,
+            "transmission": transmission,
+            "fipe_code": fipe_code,
+            "version": v.get("version") or raw_info.get("version"),
+            "fipe_candidates": candidates,
+            "is_ambiguous": raw_info.get("is_ambiguous", len(candidates) > 1),
+            "data_quality": raw_info.get("data_quality", "HIGH"),
+            "confidence": raw_info.get("confidence", 1.0),
+            "raw_response_hash": raw_info.get("raw_response_hash", hashlib.sha256(json.dumps(raw_info, sort_keys=True, default=str).encode('utf-8')).hexdigest()),
+            "raw_data": raw_info
+        }
+
+    def _get_or_create_vehicle(self, raw_info: Dict[str, Any]) -> Tuple[Optional[Vehicle], bool, List[int]]:
+        info = self._flatten_or_adapt_provider_payload(raw_info)
         make_name = normalize_make(info.get("make"))
         model_name = normalize_model(info.get("model"))
         engine_desc = normalize_engine(info.get("engine"))
