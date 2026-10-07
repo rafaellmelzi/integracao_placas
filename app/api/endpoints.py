@@ -11,6 +11,7 @@ from app.schemas.schemas import (
 )
 from app.services.plate_lookup_service import PlateLookupService
 from app.services.parts_search_service import PartsSearchService
+from app.services.parts_compatibility_service import PartsCompatibilityService
 from app.services.fipe_service import FipeService
 from app.importers.catalog_importer import CatalogImporter
 from app.db.models import (
@@ -209,6 +210,19 @@ def lookup_vehicle_by_plate(plate: str, db: Session = Depends(get_db)):
         service = PlateLookupService(db)
         res = service.get_or_fetch_plate(plate)
         return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.get("/vehicles/plate/{plate}/parts")
+def search_erp_parts_by_plate(plate: str, db: Session = Depends(get_db)):
+    """
+    Look up vehicle by plate and search external ERP database for compatible auto parts with real-time stock/price.
+    """
+    try:
+        service = PartsCompatibilityService(db)
+        return service.get_parts_by_plate(plate)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:

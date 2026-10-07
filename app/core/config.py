@@ -32,6 +32,27 @@ class Settings(BaseSettings):
     FIPE_SYNC_DELAY: float = float(os.getenv("FIPE_SYNC_DELAY", "1.0"))
     FIPE_AUTO_UPDATE: bool = os.getenv("FIPE_AUTO_UPDATE", "true").lower() in ("true", "1", "yes")
 
+    # External ERP Integration Options (e.g., AUTCOM)
+    ERP_ENABLED: bool = os.getenv("ERP_ENABLED", "false").lower() in ("true", "1", "yes")
+    ERP_DB_TYPE: str = os.getenv("ERP_DB_TYPE", "mysql")  # mysql, postgresql, oracle, sqlserver
+    ERP_DB_HOST: str = os.getenv("ERP_DB_HOST", "")
+    ERP_DB_PORT: int = int(os.getenv("ERP_DB_PORT", "3306"))
+    ERP_DB_NAME: str = os.getenv("ERP_DB_NAME", "")
+    ERP_DB_USER: str = os.getenv("ERP_DB_USER", "")
+    ERP_DB_PASSWORD: str = os.getenv("ERP_DB_PASSWORD", "")
+    ERP_QUERY_TIMEOUT_SECONDS: int = int(os.getenv("ERP_QUERY_TIMEOUT_SECONDS", "10"))
+    ERP_MAX_ROWS: int = int(os.getenv("ERP_MAX_ROWS", "5000"))
+
+    # Configurable ERP SQL Queries
+    ERP_PRODUCT_QUERY: str = os.getenv(
+        "ERP_PRODUCT_QUERY",
+        "SELECT CADITE.ITE_CODITE AS internal_code, CADITE.ITE_CODFAB AS factory_code, CADITE.ITE_DESITE AS description, CADMAR.MAR_DESMAR AS brand, CADITE.ITE_APLICA AS application FROM CADITE LEFT JOIN CADMAR ON CADITE.ITE_CODMAR = CADMAR.MAR_CODMAR WHERE UPPER(CADITE.ITE_APLICA) LIKE :vehicle_model"
+    )
+    ERP_AVAILABILITY_QUERY: str = os.getenv(
+        "ERP_AVAILABILITY_QUERY",
+        "SELECT ITEGER.ITE_CODITE AS internal_code, ITEGER.ITE_CODEMP AS company, ITEGER.ITE_SALDOS AS stock, ITEGER.ITE_PREVE1 AS price FROM ITEGER WHERE ITEGER.ITE_CODITE IN :codes"
+    )
+
     class Config:
         case_sensitive = True
 
