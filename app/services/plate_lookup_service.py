@@ -14,6 +14,7 @@ from app.db.models import (
 from app.providers.mock_plate_provider import MockPlateProvider
 from app.providers.apiplaca_provider import ApiPlacaProvider
 from app.providers.placafipe_provider import PlacaFipeProvider
+from app.providers.fipeplaca_provider import FipePlacaProvider
 from app.services.vehicle_normalizer import (
     normalize_make, normalize_model, normalize_engine
 )
@@ -35,7 +36,9 @@ class PlateLookupService:
         self.providers = []
         selected_provider = settings.VEHICLE_PROVIDER.upper().strip()
 
-        if selected_provider == "MOCK":
+        if selected_provider == "FIPEPLACA":
+            self.providers.append(FipePlacaProvider(api_key=settings.FIPEPLACA_API_KEY or settings.VEHICLE_API_KEY, base_url=settings.VEHICLE_API_URL or "https://fipeplaca.com.br/api/v1"))
+        elif selected_provider == "MOCK":
             if settings.APP_ENV.lower() == "production":
                 logger.warning("VEHICLE_PROVIDER is set to MOCK in production environment.")
             else:
@@ -43,7 +46,9 @@ class PlateLookupService:
         elif selected_provider == "APIPLACA":
             self.providers.append(ApiPlacaProvider(api_key=settings.VEHICLE_API_KEY, base_url=settings.VEHICLE_API_URL or "https://apiplaca.com.br/v1/consultar"))
         else:
-            # Fallback
+            # Default/Fallback
+            if settings.FIPEPLACA_API_KEY or settings.VEHICLE_API_KEY:
+                self.providers.append(FipePlacaProvider(api_key=settings.FIPEPLACA_API_KEY or settings.VEHICLE_API_KEY, base_url=settings.VEHICLE_API_URL or "https://fipeplaca.com.br/api/v1"))
             self.providers.append(ApiPlacaProvider(api_key=settings.VEHICLE_API_KEY, base_url=settings.VEHICLE_API_URL or "https://apiplaca.com.br/v1/consultar"))
             if settings.APP_ENV.lower() != "production":
                 self.providers.append(MockPlateProvider())
@@ -87,7 +92,8 @@ class PlateLookupService:
             }
 
         # Production check for mock/unconfigured settings
-        if settings.APP_ENV.lower() == "production" and (settings.VEHICLE_PROVIDER.upper() == "MOCK" or not settings.VEHICLE_API_KEY):
+        is_configured = bool(settings.FIPEPLACA_API_KEY or settings.VEHICLE_API_KEY or settings.VEHICLE_PROVIDER.upper() != "MOCK")
+        if settings.APP_ENV.lower() == "production" and not is_configured:
             return {
                 "plate": clean_plate,
                 "status": "PROVIDER_NOT_CONFIGURED",

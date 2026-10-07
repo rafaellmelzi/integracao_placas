@@ -12,10 +12,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./autoparts.db")
 
     # Plate Provider Configuration
-    # Options: MOCK, APIPLACA, PLACAFIPE, SERPRO
+    # Options: MOCK, FIPEPLACA, APIPLACA, PLACAFIPE, SERPRO
     VEHICLE_PROVIDER: str = os.getenv("VEHICLE_PROVIDER", "MOCK")
     VEHICLE_API_URL: str = os.getenv("VEHICLE_API_URL", "")
     VEHICLE_API_KEY: str = os.getenv("VEHICLE_API_KEY", "")
+    FIPEPLACA_API_KEY: str = os.getenv("FIPEPLACA_API_KEY", "")
     PLATE_CACHE_TTL_DAYS: int = int(os.getenv("PLATE_CACHE_TTL_DAYS", "90"))
 
     # Parts Provider / Catalog Configuration
