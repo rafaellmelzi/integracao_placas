@@ -85,11 +85,19 @@ class FipePlacaProvider(BasePlateProvider):
         elif status_code in (400, 404) or not basic_data:
             return "VEHICLE_NOT_FOUND", None
 
-        # 2. Query FIPE Candidates
+        # 2. Query FIPE Candidates (Handles both list [...] and dict {"value": [...]})
         _, fipe_resp = self._make_request(f"/placa/{clean_plate}/fipe")
         candidates = []
-        if fipe_resp and isinstance(fipe_resp, dict) and "value" in fipe_resp:
-            for item in fipe_resp["value"]:
+
+        if isinstance(fipe_resp, list):
+            fipe_items = fipe_resp
+        elif isinstance(fipe_resp, dict) and isinstance(fipe_resp.get("value"), list):
+            fipe_items = fipe_resp["value"]
+        else:
+            fipe_items = []
+
+        for item in fipe_items:
+            if isinstance(item, dict):
                 candidates.append({
                     "fipe_code": item.get("codigoFipe"),
                     "description": item.get("modelo"),

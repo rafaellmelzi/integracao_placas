@@ -46,7 +46,12 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
+@pytest.fixture(autouse=True)
+def override_db_dependency():
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    app.dependency_overrides.pop(get_db, None)
+
 client = TestClient(app)
 
 @pytest.fixture
@@ -67,7 +72,7 @@ def mock_ohf1i18_payload():
         "identification": {
             "status": "PARTIAL",
             "exact_version": False,
-            "candidate_count": 2
+            "candidate_count": 5
         },
         "fipe_candidates": [
             {
@@ -82,6 +87,33 @@ def mock_ohf1i18_payload():
             {
                 "fipe_code": "017040-2",
                 "description": "Renegade 1.8 4x2 Flex 16V Mec.",
+                "model_year": 2016,
+                "fuel": "Flex",
+                "confidence": "alta",
+                "year_match": True,
+                "fuel_match": True
+            },
+            {
+                "fipe_code": "017034-8",
+                "description": "Renegade Sport 1.8 4x2 Flex 16V Aut.",
+                "model_year": 2016,
+                "fuel": "Flex",
+                "confidence": "alta",
+                "year_match": True,
+                "fuel_match": True
+            },
+            {
+                "fipe_code": "017033-0",
+                "description": "Renegade Sport 1.8 4x2 Flex 16V Mec.",
+                "model_year": 2016,
+                "fuel": "Flex",
+                "confidence": "alta",
+                "year_match": True,
+                "fuel_match": True
+            },
+            {
+                "fipe_code": "017043-7",
+                "description": "Renegade 75 Anos 1.8 4X2 Flex 16V Aut.",
                 "model_year": 2016,
                 "fuel": "Flex",
                 "confidence": "alta",
@@ -112,7 +144,10 @@ def test_fipeplaca_ohf1i18_canonical_adaptation_and_caching(db_session, mock_ohf
         assert res1["vehicle"]["fuel"].upper() == "FLEX"
         assert res1["vehicle"]["transmission"] is None  # Transmission is NULL due to automatic/manual ambiguity
         assert res1["cache_info"]["from_cache"] is False
-        assert len(res1["fipe_candidates"]) == 2
+        assert len(res1["fipe_candidates"]) == 5
+        assert res1["identification"]["candidate_count"] == 5
+        assert res1["identification"]["exact_version"] is False
+        assert res1["identification"]["status"] == "PARTIAL"
 
         # Call 2: PostgreSQL Cache Hit
         res2 = service.get_or_fetch_plate("OHF1I18")
@@ -121,7 +156,7 @@ def test_fipeplaca_ohf1i18_canonical_adaptation_and_caching(db_session, mock_ohf
         assert res2["vehicle"]["make"] == "Jeep"
         assert res2["vehicle"]["model"] == "Renegade"
         assert res2["cache_info"]["from_cache"] is True
-        assert len(res2["fipe_candidates"]) == 2
+        assert len(res2["fipe_candidates"]) == 5
 
 def test_parts_compatibility_endpoint_with_ohf1i18(db_session, mock_ohf1i18_payload):
     mock_products = [
@@ -137,7 +172,9 @@ def test_parts_compatibility_endpoint_with_ohf1i18(db_session, mock_ohf1i18_payl
         ERPAvailability(internal_code="52384", company="001", stock=10.0, price=290.18)
     ]
 
-    with patch.object(FipePlacaProvider, "fetch_plate_info", return_value=("SUCCESS", mock_ohf1i18_payload)), \
+    mock_provider = FipePlacaProvider(api_key="secret_test_key")
+
+    with patch.object(mock_provider, "fetch_plate_info", return_value=("SUCCESS", mock_ohf1i18_payload)), \
          patch.object(PartsCompatibilityService, "_init_connector") as mock_init:
 
         mock_connector = MagicMock()
@@ -145,7 +182,14 @@ def test_parts_compatibility_endpoint_with_ohf1i18(db_session, mock_ohf1i18_payl
         mock_connector.fetch_availability.return_value = mock_avail
         mock_init.return_value = mock_connector
 
-        response = client.get("/api/v1/vehicles/plate/OHF1I18/parts")
+        def side_effect_service(db):
+            s = PartsCompatibilityService(db)
+            s.plate_service.providers = [mock_provider]
+            s.connector = mock_connector
+            return s
+
+        with patch("app.api.endpoints.PartsCompatibilityService", side_effect=side_effect_service):
+            response = client.get("/api/v1/vehicles/plate/OHF1I18/parts")
         assert response.status_code == 200
         data = response.json()
 
