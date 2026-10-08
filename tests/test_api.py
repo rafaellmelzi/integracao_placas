@@ -1,55 +1,17 @@
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.db.models import Base
-from app.db.database import get_db
-from app.main import app
-from app.seeds.seed_data import seed_database
 from app.core.config import settings
+from app.providers.tabelafipe_provider import TabelaFipeProvider
 
-# Setup in-memory SQLite database for testing
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+@pytest.fixture(autouse=True)
+def offline_fipe_catalog(monkeypatch):
+    # Exercise the API's real fallback to its seeded local catalog.
+    monkeypatch.setattr(TabelaFipeProvider, "get_reference_period", lambda self: {"label": "outubro/2026"})
+    monkeypatch.setattr(TabelaFipeProvider, "get_makes", lambda *args, **kwargs: None)
+    monkeypatch.setattr(TabelaFipeProvider, "get_models_by_make", lambda *args, **kwargs: None)
+    monkeypatch.setattr(TabelaFipeProvider, "get_family_prices", lambda *args, **kwargs: None)
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-@pytest.fixture(scope="module", autouse=True)
-def setup_test_db():
-    from alembic.config import Config
-    from alembic import command
-    alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", SQLALCHEMY_DATABASE_URL)
-    command.upgrade(alembic_cfg, "head")
-
-    db = TestingSessionLocal()
-    try:
-        from app.seeds import seed_data
-        seed_data.SessionLocal = TestingSessionLocal
-        seed_database()
-    finally:
-        db.close()
-    yield
-    Base.metadata.drop_all(bind=engine)
-
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-app.dependency_overrides[get_db] = override_get_db
-client = TestClient(app)
-
-# 1. Healthcheck Endpoint
-def test_health_check():
+def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
@@ -58,7 +20,7 @@ def test_health_check():
     assert "plate_provider" in data
 
 # 2. Cascading Vehicle Dropdowns
-def test_get_vehicle_makes():
+def test_get_vehicle_makes(client):
     response = client.get("/api/v1/vehicles/makes")
     assert response.status_code == 200
     makes = response.json()
@@ -66,7 +28,7 @@ def test_get_vehicle_makes():
     make_names = [m["name"] for m in makes]
     assert "Volkswagen" in make_names
 
-def test_get_vehicle_models():
+def test_get_vehicle_models(client):
     # Get Volkswagen ID
     makes_res = client.get("/api/v1/vehicles/makes")
     vw_id = [m["id"] for m in makes_res.json() if m["name"] == "Volkswagen"][0]
@@ -78,7 +40,7 @@ def test_get_vehicle_models():
     assert "T-Cross" in model_names
 
 # 3. Direct Vehicle Parts Search (Marca -> Modelo -> Ano -> Engine)
-def test_direct_vehicle_parts_search():
+def test_direct_vehicle_parts_search(client):
     response = client.get("/api/v1/parts/search?make=Volkswagen&model=T-Cross&year=2023&engine=1.0%20TSI&query=disco%20de%20freio")
     assert response.status_code == 200
     data = response.json()
@@ -87,7 +49,7 @@ def test_direct_vehicle_parts_search():
     assert data["results"][0]["manufacturer"] == "Fremax"
     assert data["results"][0]["manufacturer_code"] == "BD1234"
 
-def test_strict_motorization_filtering_prevention():
+def test_strict_motorization_filtering_prevention(client):
     # Search for 1.4 TSI should not return parts exclusive to 1.0 TSI
     response = client.get("/api/v1/parts/search?make=Volkswagen&model=T-Cross&year=2023&version=Highline%20250%20TSI&engine=1.4%20TSI&query=disco%20de%20freio")
     assert response.status_code == 200
@@ -96,7 +58,7 @@ def test_strict_motorization_filtering_prevention():
     assert data["status"] == "NO_COMPATIBLE_PARTS_FOUND"
 
 # 4. Plate Lookups
-def test_lookup_mercosul_plate():
+def test_lookup_mercosul_plate(client):
     response = client.get("/api/v1/vehicles/plate/ABC1D23")
     assert response.status_code == 200
     data = response.json()
@@ -105,14 +67,14 @@ def test_lookup_mercosul_plate():
     assert data["vehicle"]["make"] == "Volkswagen"
     assert data["vehicle"]["model"] == "T-Cross"
 
-def test_lookup_invalid_plate():
+def test_lookup_invalid_plate(client):
     response = client.get("/api/v1/vehicles/plate/INVALID123")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "INVALID_PLATE"
 
 # 5. Production Mode Unconfigured Provider
-def test_production_mode_unconfigured_provider():
+def test_production_mode_unconfigured_provider(client):
     orig_env = settings.APP_ENV
     orig_provider = settings.VEHICLE_PROVIDER
     try:
@@ -129,7 +91,7 @@ def test_production_mode_unconfigured_provider():
         settings.VEHICLE_PROVIDER = orig_provider
 
 # 6. Universal Catalog Importer
-def test_catalog_importer_csv():
+def test_catalog_importer_csv(client):
     csv_content = """fabricante,codigo,categoria,descricao,marca_veiculo,modelo_veiculo,motor,ano_inicio,ano_fim,oem
 Bosch,0986BB0001,Filtro de Oleo,Filtro Lubrificante,VW,T-Cross,1.0 TSI,2019,2024,04E115561H
 """
@@ -143,7 +105,7 @@ Bosch,0986BB0001,Filtro de Oleo,Filtro Lubrificante,VW,T-Cross,1.0 TSI,2019,2024
     assert data["success"] == 1
 
 # 7. ERP Product Mapping
-def test_create_erp_mapping():
+def test_create_erp_mapping(client):
     payload = {
         "erp_product_id": "AUTCOM-PRD-5544",
         "manufacturer_code": "N-1234",

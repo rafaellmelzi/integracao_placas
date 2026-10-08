@@ -1,51 +1,9 @@
-import pytest
-from unittest.mock import patch, MagicMock
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from fastapi.testclient import TestClient
+from unittest.mock import patch
 
-from app.db.models import Base, VehicleMake, VehicleModel, Vehicle, FipeCacheTracking
-from app.seeds import seed_data
+from app.db.models import VehicleMake, VehicleModel
 from app.services.fipe_service import FipeService
 from app.providers.tabelafipe_provider import TabelaFipeProvider
-from app.main import app
-from app.db.database import get_db
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-@pytest.fixture(scope="module", autouse=True)
-def setup_module_db():
-    Base.metadata.create_all(bind=engine)
-    seed_data.SessionLocal = TestingSessionLocal
-    seed_data.seed_database()
-    yield
-    Base.metadata.drop_all(bind=engine)
-
-@pytest.fixture
-def db_session():
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-app.dependency_overrides[get_db] = override_get_db
-client = TestClient(app)
 
 def test_ondemand_models_expansion_chevrolet(db_session):
     """
@@ -135,7 +93,7 @@ def test_offline_fallback_when_provider_unavailable(db_session):
         model_names = [m.name for m in models]
         assert "T-Cross" in model_names
 
-def test_background_sync_endpoint():
+def test_background_sync_endpoint(client):
     """
     Test scenario: POST /vehicles/sync returns HTTP 202 Accepted immediately.
     """

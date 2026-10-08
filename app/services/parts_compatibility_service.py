@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.integrations.erp.connectors.mysql import MySQLERPConnector
 from app.integrations.erp.connectors.postgresql import PostgreSQLERPConnector
 from app.services.application_matcher import ApplicationMatcher
+from app.services.vehicle_contract import Compatibility, MatchingVehicle
 from app.services.plate_lookup_service import PlateLookupService
 
 logger = logging.getLogger("parts_compatibility_service")
@@ -21,6 +22,8 @@ class PartsCompatibilityService:
         self.connector = self._init_connector()
 
     def _init_connector(self):
+        if settings.DEPLOYMENT_MODE == "cloud":
+            return None  # A private customer database is never contacted from cloud mode.
         if not settings.ERP_ENABLED or not settings.ERP_DB_HOST or not settings.ERP_DB_NAME:
             logger.info("PartsCompatibilityService: ERP Integration is disabled or not configured.")
             return None
@@ -54,6 +57,8 @@ class PartsCompatibilityService:
         """
         Main entry point: Plate -> Vehicle Lookup -> FIPE Candidates -> ERP Products -> Matcher -> Aggregated Availability
         """
+        erp_status = ("PRIVATE_NETWORK_UNAVAILABLE" if settings.DEPLOYMENT_MODE == "cloud" else
+                      "AVAILABLE" if self.connector else "DISABLED" if not settings.ERP_ENABLED else "NOT_CONFIGURED")
         # 1. Lookup Vehicle by Plate
         plate_res = self.plate_service.get_or_fetch_plate(plate)
         if plate_res.get("status") in ("INVALID_PLATE", "PROVIDER_NOT_CONFIGURED", "VEHICLE_NOT_FOUND") and not plate_res.get("vehicle"):
@@ -62,10 +67,13 @@ class PartsCompatibilityService:
                 "vehicle": None,
                 "identification_status": "NOT_FOUND",
                 "erp_enabled": bool(self.connector),
+                "erp_status": erp_status,
+                "parts_count": 0,
                 "parts": []
             }
 
         vehicle_dict = plate_res.get("vehicle") or {}
+        matching_vehicle = MatchingVehicle.from_mapping(vehicle_dict)
         fipe_candidates = plate_res.get("fipe_candidates") or []
 
         if not self.connector:
@@ -75,7 +83,9 @@ class PartsCompatibilityService:
                 "identification_status": plate_res.get("status"),
                 "fipe_candidates": fipe_candidates,
                 "erp_enabled": False,
-                "message": "Integração ERP não configurada ou desativada.",
+                "erp_status": erp_status,
+                "message": "AUTCOM indisponível: banco privado do cliente não acessível neste modo." if settings.DEPLOYMENT_MODE == "cloud" else "Integração ERP não configurada ou desativada.",
+                "parts_count": 0,
                 "parts": []
             }
 
@@ -88,6 +98,8 @@ class PartsCompatibilityService:
                 "identification_status": plate_res.get("status"),
                 "fipe_candidates": fipe_candidates,
                 "erp_enabled": True,
+                "erp_status": erp_status,
+                "parts_count": 0,
                 "parts": []
             }
 
@@ -95,7 +107,7 @@ class PartsCompatibilityService:
         try:
             erp_products = self.connector.fetch_products(settings.ERP_PRODUCT_QUERY, {"vehicle_model": param_model})
         except Exception as e:
-            logger.error(f"Error querying ERP products: {e}")
+            logger.error("ERP product query failed (%s)", type(e).__name__)
             return {
                 "plate": plate,
                 "vehicle": vehicle_dict,
@@ -103,6 +115,8 @@ class PartsCompatibilityService:
                 "fipe_candidates": fipe_candidates,
                 "erp_enabled": True,
                 "error": "Erro ao consultar produtos no banco do ERP.",
+                "erp_status": "UNAVAILABLE",
+                "parts_count": 0,
                 "parts": []
             }
 
@@ -111,8 +125,8 @@ class PartsCompatibilityService:
         valid_internal_codes = []
 
         for prod in erp_products:
-            match_res = ApplicationMatcher.match_application(vehicle_dict, prod.application)
-            if match_res["compatibility"] != "REJECTED":
+            match_res = ApplicationMatcher.match_application(matching_vehicle, prod.application)
+            if match_res["compatibility"] in (Compatibility.COMPATIBLE.value, Compatibility.CONDITIONAL.value):
                 valid_internal_codes.append(prod.internal_code)
                 matched_items.append({
                     "product": prod,
@@ -126,11 +140,14 @@ class PartsCompatibilityService:
                 "identification_status": plate_res.get("status"),
                 "fipe_candidates": fipe_candidates,
                 "erp_enabled": True,
+                "erp_status": erp_status,
+                "parts_count": 0,
                 "parts": []
             }
 
         # 4. Fetch Availability for matched internal codes
         availability_map: Dict[str, List[Dict[str, Any]]] = {}
+        availability_status = "AVAILABLE"
         if valid_internal_codes:
             try:
                 avail_rows = self.connector.fetch_availability(settings.ERP_AVAILABILITY_QUERY, valid_internal_codes)
@@ -143,7 +160,8 @@ class PartsCompatibilityService:
                         "price": av.price
                     })
             except Exception as e:
-                logger.warning(f"Could not fetch availability from ERP: {e}")
+                availability_status = "UNAVAILABLE"
+                logger.warning("ERP availability query failed (%s)", type(e).__name__)
 
         # 5. Format and aggregate response
         parts_list = []
@@ -160,7 +178,9 @@ class PartsCompatibilityService:
                 "application": prod.application,
                 "compatibility": match_res["compatibility"],
                 "compatibility_score": match_res["score"],
+                "requires_confirmation": match_res["compatibility"] == Compatibility.CONDITIONAL.value,
                 "match_details": {
+                    "reason": match_res["reason"],
                     "matched": match_res["matched"],
                     "unknown": match_res["unknown"],
                     "conflicts": match_res["conflicts"]
@@ -175,5 +195,7 @@ class PartsCompatibilityService:
             "fipe_candidates": fipe_candidates,
             "erp_enabled": True,
             "parts_count": len(parts_list),
+            "erp_status": erp_status,
+            "availability_status": availability_status,
             "parts": parts_list
         }

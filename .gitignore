@@ -7,4 +7,13 @@ __pycache__/
 *.sqlite
 *.sqlite3
 .env
+.env.*
+!.env.example
+!.env.production.example
+*.env
+secrets/
+*.log
+*checkpoint*.json
+*.pem
+*.key
 /home/jules/verification/

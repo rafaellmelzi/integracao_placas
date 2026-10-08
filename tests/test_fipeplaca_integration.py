@@ -1,58 +1,10 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from fastapi.testclient import TestClient
 
 from app.providers.fipeplaca_provider import FipePlacaProvider
 from app.services.plate_lookup_service import PlateLookupService
 from app.services.parts_compatibility_service import PartsCompatibilityService
 from app.integrations.erp.models import ERPProduct, ERPAvailability
-from app.db.models import Base
-from app.seeds import seed_data
-from app.main import app
-from app.db.database import get_db
-
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-@pytest.fixture(scope="module", autouse=True)
-def setup_module_db():
-    Base.metadata.create_all(bind=engine)
-    seed_data.SessionLocal = TestingSessionLocal
-    seed_data.seed_database()
-    yield
-    Base.metadata.drop_all(bind=engine)
-
-@pytest.fixture
-def db_session():
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-@pytest.fixture(autouse=True)
-def override_db_dependency():
-    app.dependency_overrides[get_db] = override_get_db
-    yield
-    app.dependency_overrides.pop(get_db, None)
-
-client = TestClient(app)
 
 @pytest.fixture
 def mock_ohf1i18_payload():
@@ -158,7 +110,7 @@ def test_fipeplaca_ohf1i18_canonical_adaptation_and_caching(db_session, mock_ohf
         assert res2["cache_info"]["from_cache"] is True
         assert len(res2["fipe_candidates"]) == 5
 
-def test_parts_compatibility_endpoint_with_ohf1i18(db_session, mock_ohf1i18_payload):
+def test_parts_compatibility_endpoint_with_ohf1i18(db_session, mock_ohf1i18_payload, client):
     mock_products = [
         ERPProduct(
             internal_code="52384",
@@ -200,4 +152,93 @@ def test_parts_compatibility_endpoint_with_ohf1i18(db_session, mock_ohf1i18_payl
         assert data["vehicle"]["year_model"] == 2016
         assert len(data["parts"]) == 1
         assert data["parts"][0]["internal_code"] == "52384"
-        assert data["parts"][0]["compatibility"] == "COMPATIBLE"
+        assert data["parts"][0]["compatibility"] == "CONDITIONAL"
+        assert data["parts"][0]["requires_confirmation"] is True
+        assert "drivetrain=4X2" in data["parts"][0]["match_details"]["unknown"]
+
+
+def test_endpoint_filters_conflicts_and_preserves_conditional_on_cache_hit(
+        client, mock_ohf1i18_payload, monkeypatch):
+    from app.core.config import settings
+    from app.schemas.schemas import PlatePartsResponseSchema
+
+    monkeypatch.setattr(settings, "VEHICLE_PROVIDER", "FIPEPLACA")
+    applications = {
+        "compatible": "JEEP RENEGADE 1.8 FLEX 2015/...",
+        "automatic": "RENEGADE 1.8 FLEX AUT 2016/...",
+        "manual": "RENEGADE 1.8 FLEX MEC 2016/...",
+        "cvt": "RENEGADE 1.8 FLEX CVT 2016/...",
+        "wrong_engine": "RENEGADE 2.4 2016/...",
+        "wrong_year": "RENEGADE 1.8 FLEX 2017/...",
+        "wrong_fuel": "JEEP RENEGADE / SPORT - ANO: 15/... (GNV)",
+        "comma": "ASTRA 1.8 FLEX 2015/..., RENEGADE 2.4 2016/...",
+        "dashes": "ASTRA 1.8 FLEX 2015/...--RENEGADE 2.4 2016/...",
+        "empty": "",
+        "unmatched": "COMPASS TODOS 2015/...",
+    }
+    connector = MagicMock()
+    connector.fetch_products.return_value = [
+        ERPProduct(code, None, "Test part", None, application)
+        for code, application in applications.items()
+    ]
+    connector.fetch_availability.return_value = [ERPAvailability("compatible", "001", 10, 20)]
+    expected = {"compatible", "automatic", "manual", "cvt"}
+    with patch.object(PartsCompatibilityService, "_init_connector", return_value=connector), \
+         patch.object(FipePlacaProvider, "fetch_plate_info", return_value=("SUCCESS", mock_ohf1i18_payload)) as provider:
+        for _ in range(2):
+            response = client.get("/api/v1/vehicles/plate/OHF1I18/parts")
+            assert response.status_code == 200
+            data = response.json()
+            PlatePartsResponseSchema.model_validate(data)
+            assert data["parts_count"] == len(data["parts"]) == 4
+            assert {p["internal_code"] for p in data["parts"]} == expected
+            assert data["vehicle"]["year_model"] == 2016
+            assert data["vehicle"]["year_manufacture"] == 2015
+            assert data["vehicle"]["engine"] == "1.8"
+            assert data["vehicle"]["transmission"] is None
+            for part in data["parts"]:
+                details = part["match_details"]
+                assert "year=2016" in details["matched"]
+                assert "engine=1.8" in details["matched"]
+                assert "fuel=FLEX" in details["matched"]
+                assert not details["conflicts"]
+                if part["internal_code"] == "compatible":
+                    assert part["compatibility"] == "COMPATIBLE"
+                    assert part["requires_confirmation"] is False
+                    assert not details["unknown"]
+                    assert part["availability"][0]["stock"] == 10
+                else:
+                    assert part["compatibility"] == "CONDITIONAL"
+                    assert part["requires_confirmation"] is True
+                    assert any(item.startswith("transmission=") for item in details["unknown"])
+            assert set(connector.fetch_availability.call_args.args[1]) == expected
+        assert provider.call_count == 1
+
+
+@pytest.mark.parametrize("scenario", ["disabled", "no_products", "only_incompatible", "query_error", "not_found"])
+def test_endpoint_empty_result_contract(client, monkeypatch, scenario):
+    from app.schemas.schemas import PlatePartsResponseSchema
+
+    connector = None if scenario == "disabled" else MagicMock()
+    vehicle = dict(make="Jeep", model="Renegade", year_model=2016, year_manufacture=2015,
+                   engine="1.8", fuel="FLEX", transmission=None)
+    plate_response = {"status": "SUCCESS", "vehicle": vehicle}
+    if scenario == "not_found":
+        plate_response = {"status": "VEHICLE_NOT_FOUND", "vehicle": None}
+    if connector:
+        connector.fetch_products.return_value = [] if scenario == "no_products" else [
+            ERPProduct("bad", None, "Wrong engine", None, "RENEGADE 2.4 2016/...")]
+        if scenario == "query_error":
+            connector.fetch_products.side_effect = RuntimeError("test connection unavailable")
+    with patch.object(PartsCompatibilityService, "_init_connector", return_value=connector), \
+         patch.object(PlateLookupService, "get_or_fetch_plate", return_value=plate_response):
+        response = client.get("/api/v1/vehicles/plate/OHF1I18/parts")
+        assert response.status_code == 200
+        data = response.json()
+        PlatePartsResponseSchema.model_validate(data)
+        assert data["parts_count"] == 0
+        assert data["parts"] == []
+        if connector:
+            connector.fetch_availability.assert_not_called()
+        if scenario == "query_error":
+            assert data["error"]

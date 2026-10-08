@@ -1,35 +1,8 @@
-import pytest
-import urllib.error
-from unittest.mock import patch, MagicMock
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from unittest.mock import patch
 
 from app.providers.fipeplaca_provider import FipePlacaProvider
 from app.services.plate_lookup_service import PlateLookupService
-from app.db.models import Base
-from app.seeds import seed_data
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-
-@pytest.fixture
-def db_session():
-    engine = create_engine(
-        SQLALCHEMY_DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool
-    )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base.metadata.create_all(bind=engine)
-    seed_data.SessionLocal = TestingSessionLocal
-    seed_database = seed_data.seed_database
-    seed_database()
-
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
 
 def test_fipeplaca_provider_valid_plate_direct_list_format():
     """Test FipePlacaProvider when /fipe endpoint returns direct list [...] format."""

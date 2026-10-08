@@ -23,21 +23,26 @@ services:
     restart: always
     ports:
       - "8000:8000"
+
+    # Carrega todas as configurações do arquivo .env
+    env_file:
+      - .env
+
+    # O banco interno continua sendo o PostgreSQL do Docker.
+    # Esta variável sobrescreve apenas DATABASE_URL do .env.
     environment:
-      - APP_ENV=development
-      - DATABASE_URL=postgresql+psycopg://autoparts_user:autoparts_password@db:5432/autoparts_db
-      - VEHICLE_PROVIDER=MOCK
-      - VEHICLE_API_KEY=
-      - PARTS_PROVIDER=LOCAL_DB
-      - PLATE_CACHE_TTL_DAYS=90
+      DATABASE_URL: postgresql+psycopg://autoparts_user:autoparts_password@db:5432/autoparts_db
+
     depends_on:
       db:
         condition: service_healthy
+
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 3
+
     command: >
       sh -c "alembic upgrade head &&
              python -m app.seeds.seed_data &&

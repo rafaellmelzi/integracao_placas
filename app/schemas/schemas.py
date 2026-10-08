@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, ConfigDict
+from typing import Optional, List, Dict, Any, Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Vehicle Schemas
 class VehicleResponseSchema(BaseModel):
@@ -74,6 +74,55 @@ class PartsSearchResponseSchema(BaseModel):
     results_count: int = 0
     results: List[PartResultSchema] = []
     message: Optional[str] = None
+
+
+class ApplicationMatchDetailsSchema(BaseModel):
+    reason: str
+    matched: List[str]
+    unknown: List[str]
+    conflicts: List[str]
+
+
+class ApplicableERPPartSchema(BaseModel):
+    internal_code: str
+    factory_code: Optional[str]
+    description: str
+    brand: Optional[str]
+    application: Optional[str]
+    compatibility: Literal["COMPATIBLE", "CONDITIONAL"]
+    compatibility_score: int = Field(ge=0, le=100)
+    requires_confirmation: bool
+    match_details: ApplicationMatchDetailsSchema
+    availability: List[Dict[str, Any]]
+
+    @model_validator(mode="after")
+    def consistent_compatibility(self):
+        conditional = self.compatibility == "CONDITIONAL"
+        if self.requires_confirmation != conditional or bool(self.match_details.unknown) != conditional:
+            raise ValueError("Classification must agree with confirmation requirements")
+        if self.match_details.conflicts:
+            raise ValueError("An applicable part cannot contain attribute conflicts")
+        return self
+
+
+class PlatePartsResponseSchema(BaseModel):
+    plate: str
+    vehicle: Optional[Dict[str, Any]] = None
+    identification_status: Optional[str] = None
+    fipe_candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    erp_enabled: bool
+    erp_status: Literal["AVAILABLE", "DISABLED", "NOT_CONFIGURED", "PRIVATE_NETWORK_UNAVAILABLE", "UNAVAILABLE"] = "NOT_CONFIGURED"
+    availability_status: Literal["AVAILABLE", "UNAVAILABLE", "NOT_QUERIED"] = "NOT_QUERIED"
+    parts_count: int = Field(ge=0)
+    parts: List[ApplicableERPPartSchema]
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+    @model_validator(mode="after")
+    def consistent_count(self):
+        if self.parts_count != len(self.parts):
+            raise ValueError("parts_count must equal the number of returned parts")
+        return self
 
 # ERP Mapping Create/Update Schema
 class ERPProductMappingCreateSchema(BaseModel):

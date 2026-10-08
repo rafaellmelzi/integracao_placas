@@ -48,7 +48,9 @@ def test_case_3_at_least_one_compatible_segment(renegade_flex_18_2016):
 # CASE 4: Multiple engines in same application "1.8/2.0" -> COMPATIBLE
 def test_case_4_multiple_engines_same_segment(renegade_flex_18_2016):
     app_text = "RENEGADE 4X2 1.8/2.0 2015/..."
-    res = ApplicationMatcher.match_application(renegade_flex_18_2016, app_text)
+    # Keep this scenario focused on the engine list; test unknown drivetrain separately.
+    vehicle = dict(renegade_flex_18_2016, drivetrain="4X2")
+    res = ApplicationMatcher.match_application(vehicle, app_text)
     assert res["compatibility"] == "COMPATIBLE"
     assert "engine=1.8" in res["matched"]
 
@@ -119,3 +121,120 @@ def test_case_13_unrestricted_segment_overrides_conditional(renegade_flex_18_201
     """
     res = ApplicationMatcher.match_application(renegade_flex_18_2016, app_text)
     assert res["compatibility"] == "COMPATIBLE"
+
+
+@pytest.mark.parametrize("separator", [", ", ",", "--", " -- ", ";", "\n", " - "])
+@pytest.mark.parametrize("first,last,expected", [
+    ("ASTRA 1.8 FLEX 2015/...", "RENEGADE 2.4 2016/...", "INCOMPATIBLE"),
+    ("ASTRA 2.4 GNV 2017/...", "RENEGADE 1.8 FLEX 2015/...", "COMPATIBLE"),
+    ("RENEGADE 1.8 FLEX 2017/...", "COMPASS 1.8 FLEX 2015/...", "INCOMPATIBLE"),
+    ("RENEGADE 1.8 GNV 2015/...", "COMPASS 1.8 FLEX 2015/...", "INCOMPATIBLE"),
+])
+def test_attribute_isolation(renegade_flex_18_2016, separator, first, last, expected):
+    res = ApplicationMatcher.match_application(renegade_flex_18_2016, first + separator + last)
+    assert res["compatibility"] == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("RENEGADE 1.8 FLEX CVT 2015/...", "CONDITIONAL"),
+    ("RENEGADE 1.8 FLEX 4X2 2015/...", "CONDITIONAL"),
+    ("RENEGADE 1.8 - GASOLINA 2017/...", "INCOMPATIBLE"),
+    ("COMPASS TODOS 2015/...", "INCOMPATIBLE"),
+    ("RENEGADEPLUS 1.8 FLEX 2015/...", "INCOMPATIBLE"),
+    ("RENEGADE", "CONDITIONAL"),
+    ("TODOS", "INCOMPATIBLE"),
+    ("RENEGADE 1.8 FLEX 2015 2017", "INCOMPATIBLE"),
+    ("RENEGADE/COMPASS 1.8/2.0 FLEX 2015/2021", "COMPATIBLE"),
+    ("RENEGADE 1,8 FLEX 2015/...", "COMPATIBLE"),
+    ("RENEGADE 1.8, FLEX, ANO: 15/...", "COMPATIBLE"),
+    ("FIAT RENEGADE 1.8 FLEX 2015/...", "INCOMPATIBLE"),
+    ("RENEGADE 2.4 2015/... -- RENEGADE 1.8 2017/...", "INCOMPATIBLE"),
+    ("RENEGADE 2.4 2015/... -- RENEGADE 1.8 CVT 2015/...", "CONDITIONAL"),
+    ("RENEGADE 2.4 COMPASS 1.8 FLEX 2015/...", "CONDITIONAL"),
+    ("RENEGADE 2.4/COMPASS 1.8 FLEX 2015/...", "INCOMPATIBLE"),
+    ("FIAT - RENEGADE 1.8 FLEX 2015/...", "INCOMPATIBLE"),
+    ("RENEGADE 1.8 - SPORT 2017/...", "INCOMPATIBLE"),
+    ("RENEGADE 1.8 FLEX ANO: 17/.", "INCOMPATIBLE"),
+    ("RENEGADE 1.8 2017/... / 2.4 2016/...", "CONDITIONAL"),
+    ("RENEGADE 1.8 FLEX 2015/... EXCETO FLEX", "INCOMPATIBLE"),
+])
+def test_conservative_classification(renegade_flex_18_2016, text, expected):
+    res = ApplicationMatcher.match_application(renegade_flex_18_2016, text)
+    assert res["compatibility"] == expected
+    if expected == "CONDITIONAL":
+        assert res["unknown"]
+
+
+@pytest.mark.parametrize("text,reason", [(None, "EMPTY_APPLICATION"), ("", "EMPTY_APPLICATION"),
+    ("   ", "EMPTY_APPLICATION"), (123, "INVALID_APPLICATION"), ("1234", "INVALID_APPLICATION"),
+    ("COMPASS 2.0 2015/...", "MODEL_NOT_FOUND"), ("RENEGADE 1.8 2021/2015", "INVALID_APPLICATION")])
+def test_invalid_and_unmatched_applications(renegade_flex_18_2016, text, reason):
+    res = ApplicationMatcher.match_application(renegade_flex_18_2016, text)
+    assert res["compatibility"] == "INCOMPATIBLE"
+    assert res["reason"] == reason
+    assert res["conflicts"]
+
+
+@pytest.mark.parametrize("field", ["engine_displacement", "model_year", "fuel", "transmission", "drivetrain"])
+def test_required_unknown_attribute_is_conditional(renegade_flex_18_2016, field):
+    vehicle = dict(renegade_flex_18_2016, transmission="CVT", drivetrain="4X2")
+    vehicle[field] = None
+    if field == "model_year":
+        vehicle["manufacture_year"] = None
+    res = ApplicationMatcher.match_application(vehicle, "RENEGADE 1.8 FLEX CVT 4X2 2015/...")
+    assert res["compatibility"] == "CONDITIONAL"
+    assert res["unknown"]
+
+
+def test_normalized_api_vehicle_and_model_year_precedence():
+    vehicle = dict(make="Jeep", model="Renegade", year_model="2016", year_manufacture=2015,
+                   engine="1.8 16V", fuel="Flex", transmission=None)
+    for text, expected in [("RENEGADE 2.4 2016/...", "INCOMPATIBLE"),
+                           ("RENEGADE 1.8 FLEX 2017/...", "INCOMPATIBLE"),
+                           ("RENEGADE 1.8 FLEX 2015/2015", "INCOMPATIBLE"),
+                           ("RENEGADE 1.8 16V FLEX 2016/...", "COMPATIBLE")]:
+        assert ApplicationMatcher.match_application(vehicle, text)["compatibility"] == expected
+
+
+@pytest.mark.parametrize("transmission,expected", [("CVT", "COMPATIBLE"), ("Manual", "INCOMPATIBLE"), (None, "CONDITIONAL")])
+def test_cvt_restriction(renegade_flex_18_2016, transmission, expected):
+    vehicle = dict(renegade_flex_18_2016, transmission=transmission)
+    assert ApplicationMatcher.match_application(vehicle, "RENEGADE 1.8 FLEX CVT 2015/...")["compatibility"] == expected
+
+
+@pytest.mark.parametrize("engine,text,expected", [
+    ("1.8 16V", "RENEGADE 1.8 16V FLEX 2015/...", "COMPATIBLE"),
+    ("1.8 16V", "RENEGADE 1.8 8V FLEX 2015/...", "INCOMPATIBLE"),
+    ("1.8", "RENEGADE 1.8 16V FLEX 2015/...", "CONDITIONAL"),
+    ("1.8 Turbo", "RENEGADE 1.8 TURBO FLEX 2015/...", "COMPATIBLE"),
+    ("1.8 Aspirado", "RENEGADE 1.8 TURBO FLEX 2015/...", "INCOMPATIBLE"),
+    ("1.8", "RENEGADE 1.8 TURBO FLEX 2015/...", "CONDITIONAL"),
+    ("1.8L", "RENEGADE 2.4 FLEX 2015/...", "INCOMPATIBLE"),
+])
+def test_engine_description_restrictions(engine, text, expected):
+    vehicle = dict(make="Jeep", model="Renegade", year_model=2016, engine=engine, fuel="Flex")
+    assert ApplicationMatcher.match_application(vehicle, text)["compatibility"] == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("RENEGADE 1.8 FLEX ANO MODELO: 2016 FABRICACAO: 2015", "COMPATIBLE"),
+    ("RENEGADE 1.8 FLEX ANO MODELO: 2017 FABRICACAO: 2016", "INCOMPATIBLE"),
+    ("RENEGADE 1.8 FLEX ANO FABRICACAO: 2016", "INCOMPATIBLE"),
+    ("RENEGADE 1.8 FLEX ANO FABRICACAO: 2015", "COMPATIBLE"),
+])
+def test_model_and_manufacture_year_are_independent(renegade_flex_18_2016, text, expected):
+    assert ApplicationMatcher.match_application(renegade_flex_18_2016, text)["compatibility"] == expected
+
+
+def test_unknown_model_year_is_not_invented_from_manufacture_year(renegade_flex_18_2016):
+    vehicle = dict(renegade_flex_18_2016, model_year=None)
+    res = ApplicationMatcher.match_application(vehicle, "RENEGADE 1.8 FLEX 2015/2015")
+    assert res["compatibility"] == "CONDITIONAL"
+    assert any(value.startswith("model_year=") for value in res["unknown"])
+
+
+@pytest.mark.parametrize("version,expected", [(None, "CONDITIONAL"), ("Sport", "COMPATIBLE"), ("Longitude", "INCOMPATIBLE")])
+def test_explicit_version_restriction(renegade_flex_18_2016, version, expected):
+    vehicle = dict(renegade_flex_18_2016, version=version)
+    res = ApplicationMatcher.match_application(vehicle, "RENEGADE SPORT 1.8 FLEX 2015/...")
+    assert res["compatibility"] == expected

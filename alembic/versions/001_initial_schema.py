@@ -7,6 +7,7 @@ Create Date: 2025-01-15 00:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import ENUM
 
 revision = '001_initial_schema'
 down_revision = None
@@ -14,6 +15,17 @@ branch_labels = None
 depends_on = None
 
 def upgrade() -> None:
+    # PostgreSQL enums are shared across tables and must be created exactly once.
+    def enum_type(name, *values):
+        if op.get_bind().dialect.name == "postgresql":
+            enum = ENUM(*values, name=name, create_type=False)
+            enum.create(op.get_bind(), checkfirst=True)
+            return enum
+        return sa.Enum(*values, name=name)
+
+    confidence = enum_type("confidencelevel", "CONFIRMED", "HIGH_CONFIDENCE", "POSSIBLE", "UNVERIFIED")
+    reference = enum_type("crossreferencetype", "OEM", "AFTERMARKET", "EQUIVALENT", "REPLACEMENT")
+    mapping = enum_type("erpproductmappingtype", "EAN", "MANUFACTURER_CODE", "OEM_CODE", "CROSS_REFERENCE", "MANUAL", "SUGGESTED_AI")
     # 1. Vehicles Schema Tables
     op.create_table(
         'vehicle_make',
@@ -163,7 +175,7 @@ def upgrade() -> None:
         sa.Column('notes', sa.Text(), nullable=True),
         sa.Column('source', sa.String(length=100), nullable=False, server_default='CATALOGO_FABRICANTE'),
         sa.Column('source_updated_at', sa.DateTime(), nullable=False),
-        sa.Column('confidence', sa.Enum('CONFIRMED', 'HIGH_CONFIDENCE', 'POSSIBLE', 'UNVERIFIED', name='confidencelevel'), nullable=False)
+        sa.Column('confidence', confidence, nullable=False)
     )
     op.create_index('ix_part_application_part_id', 'part_application', ['part_id'])
     op.create_index('ix_part_application_vehicle_id', 'part_application', ['vehicle_id'])
@@ -173,9 +185,9 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column('part_id', sa.Integer(), sa.ForeignKey('part.id', ondelete='CASCADE'), nullable=False),
         sa.Column('reference_part_id', sa.Integer(), sa.ForeignKey('part.id', ondelete='CASCADE'), nullable=False),
-        sa.Column('reference_type', sa.Enum('OEM', 'AFTERMARKET', 'EQUIVALENT', 'REPLACEMENT', name='crossreferencetype'), nullable=False),
+        sa.Column('reference_type', reference, nullable=False),
         sa.Column('source', sa.String(length=100), nullable=False, server_default='MANUFACTURER'),
-        sa.Column('confidence', sa.Enum('CONFIRMED', 'HIGH_CONFIDENCE', 'POSSIBLE', 'UNVERIFIED', name='confidencelevel'), nullable=False)
+        sa.Column('confidence', confidence, nullable=False)
     )
     op.create_index('ix_part_cross_reference_part_id', 'part_cross_reference', ['part_id'])
     op.create_index('ix_part_cross_reference_reference_part_id', 'part_cross_reference', ['reference_part_id'])
@@ -187,8 +199,8 @@ def upgrade() -> None:
         sa.Column('part_id', sa.Integer(), sa.ForeignKey('part.id'), nullable=True),
         sa.Column('manufacturer_code', sa.String(length=100), nullable=True),
         sa.Column('ean', sa.String(length=20), nullable=True),
-        sa.Column('mapping_type', sa.Enum('EAN', 'MANUFACTURER_CODE', 'OEM_CODE', 'CROSS_REFERENCE', 'MANUAL', 'SUGGESTED_AI', name='erpproductmappingtype'), nullable=False),
-        sa.Column('confidence', sa.Enum('CONFIRMED', 'HIGH_CONFIDENCE', 'POSSIBLE', 'UNVERIFIED', name='confidencelevel'), nullable=False),
+        sa.Column('mapping_type', mapping, nullable=False),
+        sa.Column('confidence', confidence, nullable=False),
         sa.Column('verified', sa.Boolean(), nullable=False, server_default=sa.text('true')),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False)
@@ -250,3 +262,7 @@ def downgrade() -> None:
     op.drop_table('vehicle_generation')
     op.drop_table('vehicle_model')
     op.drop_table('vehicle_make')
+
+    if op.get_bind().dialect.name == "postgresql":
+        for name in ("erpproductmappingtype", "crossreferencetype", "confidencelevel"):
+            ENUM(name=name).drop(op.get_bind(), checkfirst=True)

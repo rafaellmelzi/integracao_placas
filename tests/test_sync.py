@@ -1,39 +1,11 @@
-import os
-import json
 import pytest
 import urllib.error
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.db.models import Base, VehicleMake, VehicleModel, Vehicle, SyncLog
-from app.seeds import seed_data
-from app.scripts.sync_vehicle_database import (
-    VehicleDatabaseSyncer, fetch_json, CheckpointManager, parse_retry_after, stats
-)
+from app.db.models import VehicleMake, Vehicle
+from app.scripts.sync_vehicle_database import VehicleDatabaseSyncer, fetch_json, CheckpointManager, parse_retry_after
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-
-@pytest.fixture
-def db_session():
-    engine = create_engine(
-        SQLALCHEMY_DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool
-    )
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base.metadata.create_all(bind=engine)
-    seed_data.SessionLocal = TestingSessionLocal
-    seed_data.seed_database()
-
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(bind=engine)
 
 def test_fetch_json_retry_after_capped_at_60s():
     """Verify that an extreme Retry-After header (e.g. 83205s) is strictly capped at 60s max wait time."""
@@ -134,7 +106,25 @@ def test_checkpoint_manager(tmp_path):
     assert mgr.is_model_completed("1", "101")
     assert "101" not in mgr.data["failed_models"]["1"]
 
-def test_vehicle_sync_routine_idempotency(db_session, tmp_path):
+@pytest.fixture
+def fipe_catalog(monkeypatch):
+    def catalog(url):
+        if url.endswith("/marcas"):
+            return [{"codigo": "1", "nome": "Acura"}]
+        if url.endswith("/modelos"):
+            return {"modelos": [{"codigo": "101", "nome": "Integra"}, {"codigo": "102", "nome": "Legend"}]}
+        if url.endswith("/anos"):
+            return [{"codigo": "2016-1", "nome": "2016 Gasolina"}]
+        if url.endswith("/anos/2016-1"):
+            model = "Integra" if "/101/" in url else "Legend"
+            return {"CodigoFipe": "001101-1" if model == "Integra" else "001102-1",
+                    "AnoModelo": 2016, "Combustivel": "Gasolina", "Modelo": model}
+        raise AssertionError(f"Unexpected FIPE URL: {url}")
+
+    monkeypatch.setattr("app.scripts.sync_vehicle_database.fetch_json", catalog)
+
+
+def test_vehicle_sync_routine_idempotency(db_session, tmp_path, fipe_catalog):
     checkpoint_path = str(tmp_path / "sync_idempotency_checkpoint.json")
 
     # 1. First Sync Run (Limited to 1 make, 2 models)
@@ -158,7 +148,7 @@ def test_vehicle_sync_routine_idempotency(db_session, tmp_path):
     assert db_session.query(Vehicle).count() == initial_vehicles
     assert syncer2.inserted == 0
 
-def test_fipe_vehicle_missing_engine_null_handling(db_session, tmp_path):
+def test_fipe_vehicle_missing_engine_null_handling(db_session, tmp_path, fipe_catalog):
     checkpoint_path = str(tmp_path / "null_engine_checkpoint.json")
 
     syncer = VehicleDatabaseSyncer(db=db_session, delay_sec=0.01, limit_makes=1, limit_models=1)
@@ -166,7 +156,7 @@ def test_fipe_vehicle_missing_engine_null_handling(db_session, tmp_path):
     syncer.run()
 
     acura_make = db_session.query(VehicleMake).filter(VehicleMake.normalized_name == "ACURA").first()
-    if acura_make:
-        v = db_session.query(Vehicle).filter_by(make_id=acura_make.id).first()
-        if v:
-            assert v.engine_id is None
+    assert acura_make is not None
+    v = db_session.query(Vehicle).filter_by(make_id=acura_make.id).first()
+    assert v is not None
+    assert v.engine_id is None

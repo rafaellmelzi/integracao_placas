@@ -4,10 +4,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, distinct
 
 from app.core.config import settings
+from app.core.security import cloud_api_access
 from app.db.database import get_db
 from app.schemas.schemas import (
     PlateLookupResponseSchema, PartsSearchResponseSchema,
-    ERPProductMappingCreateSchema, ERPProductMappingSchema
+    ERPProductMappingCreateSchema, ERPProductMappingSchema, PlatePartsResponseSchema
 )
 from app.services.plate_lookup_service import PlateLookupService
 from app.services.parts_search_service import PartsSearchService
@@ -20,18 +21,21 @@ from app.db.models import (
     SyncLog
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(cloud_api_access)])
 
 @router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     """
     Healthcheck endpoint verifying DB connectivity and provider configuration status.
     """
+    if settings.DEPLOYMENT_MODE == "cloud":
+        from app.health import readiness
+        return readiness(db)
     db_status = "connected"
     try:
         db.execute(text("SELECT 1"))
     except Exception as e:
-        db_status = f"error: {str(e)}"
+        raise HTTPException(status_code=503, detail="Database unavailable") from None
 
     plate_provider_status = "configured" if (settings.VEHICLE_PROVIDER.upper() == "MOCK" or bool(settings.VEHICLE_API_KEY)) else "not_configured"
     catalog_parts_count = db.query(Part).count()
@@ -107,6 +111,8 @@ def trigger_vehicle_sync(
     """
     Trigger non-blocking background vehicle database synchronization with TabelaFIPE.info public API.
     """
+    if not settings.FIPE_SYNC_ENABLED:
+        raise HTTPException(status_code=503, detail="FIPE bulk sync disabled")
     background_tasks.add_task(run_background_sync, db, limit_makes)
     return {
         "status": "SYNC_STARTED",
@@ -213,9 +219,9 @@ def lookup_vehicle_by_plate(plate: str, db: Session = Depends(get_db)):
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/vehicles/plate/{plate}/parts")
+@router.get("/vehicles/plate/{plate}/parts", response_model=PlatePartsResponseSchema)
 def search_erp_parts_by_plate(plate: str, db: Session = Depends(get_db)):
     """
     Look up vehicle by plate and search external ERP database for compatible auto parts with real-time stock/price.
@@ -226,7 +232,7 @@ def search_erp_parts_by_plate(plate: str, db: Session = Depends(get_db)):
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/parts/search", response_model=PartsSearchResponseSchema)
 def search_parts(
@@ -258,7 +264,7 @@ def search_parts(
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/erp/mapping")
 def create_or_update_erp_mapping(payload: ERPProductMappingCreateSchema, db: Session = Depends(get_db)):

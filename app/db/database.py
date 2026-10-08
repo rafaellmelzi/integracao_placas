@@ -1,17 +1,12 @@
-import os
 from typing import Generator
-from sqlalchemy import create_engine
+from app.core.config import settings
+from app.core.security import install_log_redaction
+from app.db.connection import create_database_engine
 from sqlalchemy.orm import sessionmaker, Session
 from app.db.models import Base
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./autoparts.db")
-
-# Use connect_args for SQLite
-engine_kwargs = {}
-if DATABASE_URL.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
-
-engine = create_engine(DATABASE_URL, **engine_kwargs)
+install_log_redaction()
+engine = create_database_engine(settings.DATABASE_URL, settings)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

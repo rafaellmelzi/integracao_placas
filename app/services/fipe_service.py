@@ -8,6 +8,7 @@ from app.db.models import (
     FipeCacheTracking, SyncLog
 )
 from app.providers.tabelafipe_provider import TabelaFipeProvider
+from app.core.config import settings
 from app.services.vehicle_normalizer import normalize_make, normalize_model, parse_version_specs
 
 logger = logging.getLogger("fipe_service")
@@ -24,7 +25,7 @@ class FipeService:
         self.provider = provider or TabelaFipeProvider(delay_sec=0.2)
 
     def _get_current_fipe_reference(self) -> str:
-        ref_data = self.provider.get_reference_period()
+        ref_data = self.provider.get_reference_period() if settings.FIPE_AUTO_UPDATE else None
         if ref_data and "label" in ref_data:
             return str(ref_data["label"])
         return "outubro/2026"
@@ -56,9 +57,9 @@ class FipeService:
         current_ref = self._get_current_fipe_reference()
         cache_key = "MAKES"
 
-        if self.is_cache_valid(cache_key, current_ref):
+        if not settings.FIPE_AUTO_UPDATE or self.is_cache_valid(cache_key, current_ref):
             makes = self.db.query(VehicleMake).order_by(VehicleMake.name).all()
-            if makes:
+            if makes or not settings.FIPE_AUTO_UPDATE:
                 return makes
 
         # Fetch from TabelaFIPE.info
@@ -88,9 +89,9 @@ class FipeService:
         current_ref = self._get_current_fipe_reference()
         cache_key = f"MODELS:{make_id}"
 
-        if self.is_cache_valid(cache_key, current_ref):
+        if not settings.FIPE_AUTO_UPDATE or self.is_cache_valid(cache_key, current_ref):
             models = self.db.query(VehicleModel).filter_by(make_id=make_id).order_by(VehicleModel.name).all()
-            if models:
+            if models or not settings.FIPE_AUTO_UPDATE:
                 return models
 
         # Fetch from TabelaFIPE.info
@@ -131,7 +132,7 @@ class FipeService:
         current_ref = self._get_current_fipe_reference()
         cache_key = f"YEARS:{model_id}"
 
-        if not self.is_cache_valid(cache_key, current_ref):
+        if settings.FIPE_AUTO_UPDATE and not self.is_cache_valid(cache_key, current_ref):
             db_make = db_model.make
             make_slug = db_make.name.lower().replace(" ", "-").replace("/", "-")
             family_slug = db_model.name.lower().replace(" ", "-").replace("/", "-")
